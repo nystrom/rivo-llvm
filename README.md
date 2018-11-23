@@ -2,8 +2,15 @@
 
 This is just an implementation of simple functional high-level IR.
 
-The implementation is based on a simple compiler I wrote for teaching compilers at USI.
-This was in turn based on Jens Palsberg's MiniJava compiler.
+The implementation is based on the Ristretto compiler I wrote for teaching compilers at USI.
+This was, in turn, based on Jens Palsberg's MiniJava compiler for the Tiger book.
+
+HIR has been extended with several features to make it a better target language:
+
+- more primitives
+- more types
+- closures
+- structs
 
 The compiler consists of three IRs:
 
