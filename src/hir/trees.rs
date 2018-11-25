@@ -2,7 +2,7 @@ use crate::common::names::Name;
 
 use crate::hir::ops::*;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Type {
     I32,
     I64,
@@ -10,28 +10,34 @@ pub enum Type {
     F64,
     Bool,
     Void,
+
+    // Pointer types
     Array { ty: Box<Type> },
     Struct { fields: Vec<Param> },
     Fun { ty: Box<Type>, params: Vec<Type> },
+
+    // Boxed/tagged values.
+    // To use a boxed value, one must explicitly unbox.
     Box,
-    FunPtr,
+
+    // TODO: get rid of these.
+    FunPtr, // these are just placeholders for
     EnvPtr,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Param {
     pub ty: Type,
     pub name: Name,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Lit {
     I32 { value: i32 },
     I64 { value: i64 },
     F32 { value: f32 },
     F64 { value: f64 },
     Bool { value: bool },
-    Void,
 }
 
 #[derive(Clone, Debug)]
@@ -42,7 +48,7 @@ pub struct Root {
 #[derive(Clone, Debug)]
 pub enum Def {
     VarDef { ty: Type, name: Name, exp: Box<Exp> },
-    FunDef { ty: Type, name: Name, params: Vec<Param>, body: Box<Stm> },
+    FunDef { ty: Type, name: Name, params: Vec<Param>, body: Box<Exp> },
     ExternDef { ty: Type, name: Name, params: Vec<Param> },
 }
 
@@ -72,6 +78,14 @@ pub enum Exp {
     // These are tagged in Ivo, but we make the tag an explicit field in HIR.
     StructLit { ty: Type, fields: Vec<Field> },
     StructLoad { ty: Type, base: Box<Exp>, field: Name },
+
+    // Convert to and from boxed values.
+    Box { ty: Type, exp: Box<Exp> },
+    Unbox { ty: Type, exp: Box<Exp> },
+
+    // Unchecked cast from one type to another.
+    // Should only be used for pointer types.
+    Cast { ty: Type, exp: Box<Exp> },
 }
 
 #[derive(Clone, Debug)]

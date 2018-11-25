@@ -9,6 +9,8 @@ use crate::hir::ops::*;
 
 // Closure converted expressions and statements.
 // This is just a duplicate of Exp, but Lambda and Apply are different.
+// The purpose of this is to ensure all the tree is rewritten. We transform from
+// HIR to HIR/CC, then back to HIR (without Lambda).
 mod hircc {
     use crate::hir::trees::Type;
     use crate::hir::trees::Param;
@@ -38,6 +40,10 @@ mod hircc {
 
         StructLit { ty: Type, fields: Vec<Field> },
         StructLoad { ty: Type, base: Box<Exp>, field: Name },
+
+        Box { ty: Type, exp: Box<Exp> },
+        Unbox { ty: Type, exp: Box<Exp> },
+        Cast { ty: Type, exp: Box<Exp> },
     }
 
     #[derive(Clone, Debug)]
@@ -152,6 +158,9 @@ impl FV for Exp {
                 union!(e1.fv(), e2.fv())
             },
             Exp::Unary { op, exp } => exp.fv(),
+            Exp::Box { ty, exp } => exp.fv(),
+            Exp::Unbox { ty, exp } => exp.fv(),
+            Exp::Cast { ty, exp } => exp.fv(),
 
             Exp::Seq { body, exp } => {
                 union!(body.fv(), exp.fv())
@@ -237,6 +246,15 @@ impl Substitute for hircc::Exp {
             },
             hircc::Exp::Unary { op, exp } => {
                 hircc::Exp::Unary { op: *op, exp: exp.subst(s) }
+            },
+            hircc::Exp::Box { ty, exp } => {
+                hircc::Exp::Box { ty: ty.clone(), exp: exp.subst(s) }
+            },
+            hircc::Exp::Unbox { ty, exp } => {
+                hircc::Exp::Unbox { ty: ty.clone(), exp: exp.subst(s) }
+            },
+            hircc::Exp::Cast { ty, exp } => {
+                hircc::Exp::Cast { ty: ty.clone(), exp: exp.subst(s) }
             },
 
             hircc::Exp::Seq { body, exp } => {
@@ -338,6 +356,15 @@ impl CC<hircc::Exp> for Exp {
             },
             Exp::Unary { op, exp } => {
                 hircc::Exp::Unary { op: *op, exp: Box::new(exp.convert()) }
+            },
+            Exp::Box { ty, exp } => {
+                hircc::Exp::Box { ty: ty.clone(), exp: Box::new(exp.convert()) }
+            },
+            Exp::Unbox { ty, exp } => {
+                hircc::Exp::Unbox { ty: ty.clone(), exp: Box::new(exp.convert()) }
+            },
+            Exp::Cast { ty, exp } => {
+                hircc::Exp::Cast { ty: ty.clone(), exp: Box::new(exp.convert()) }
             },
 
             Exp::Seq { body, exp } => {
@@ -539,6 +566,15 @@ impl LL<Exp> for hircc::Exp {
             hircc::Exp::Unary { op, exp } => {
                 Exp::Unary { op: *op, exp: Box::new(exp.lift(decls)) }
             },
+            hircc::Exp::Box { ty, exp } => {
+                Exp::Box { ty: ty.clone(), exp: Box::new(exp.lift(decls)) }
+            },
+            hircc::Exp::Unbox { ty, exp } => {
+                Exp::Unbox { ty: ty.clone(), exp: Box::new(exp.lift(decls)) }
+            },
+            hircc::Exp::Cast { ty, exp } => {
+                Exp::Cast { ty: ty.clone(), exp: Box::new(exp.lift(decls)) }
+            },
             hircc::Exp::Seq { body, exp } => {
                 Exp::Seq { body: Box::new(body.lift(decls)), exp: Box::new(exp.lift(decls)) }
             },
@@ -558,7 +594,7 @@ impl LL<Exp> for hircc::Exp {
                     ty: Type::Box,  // TODO
                     name: f,
                     params: def_params,
-                    body: Box::new(Stm::Return { exp: Box::new(lifted_body) }),
+                    body: Box::new(lifted_body),
                 });
 
                 Exp::Var { name: f, ty: Type::FunPtr }

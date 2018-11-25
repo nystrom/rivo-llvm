@@ -14,7 +14,7 @@ pub struct Data {
     pub name: Name,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Param {
     pub ty: Type,
     pub name: Name,
@@ -31,7 +31,6 @@ pub struct Proc {
 #[derive(Clone, Debug)]
 pub enum Stm {
     Nop,
-    Error { message: String },
 
     // Following LLVM, we don't fall-through to the next instruction, but have two branch targets.
     CJump { cond: Box<Exp>, if_true: Name, if_false: Name },
@@ -39,51 +38,43 @@ pub enum Stm {
     Label { label: Name },
 
     Move { ty: Type, lhs: Name, rhs: Box<Exp> },
-    Store { ty: Type, ptr: Box<Exp>, value: Box<Exp> }
+    Store { ty: Type, ptr: Box<Exp>, value: Box<Exp> },
+
+    // Early return
+    Return { exp: Box<Exp> },
 
     // StructStore { struct_ty: Type, ptr: Box<Exp>, field: usize, value: Box<Exp> },
     // ArrayStore { base_ty: Type, ptr: Box<Exp>, index: Box<Exp>, value: Box<Exp> },
 }
 
 #[derive(Clone, Debug)]
-pub struct Address {
-    pub base: Box<Exp>,
-    pub offset: i32,
-}
-
-#[derive(Clone, Debug)]
 pub enum Exp {
     Block { body: Vec<Stm>, exp: Box<Exp> },
 
-    // FIXME: typing
-    Call { fun: Box<Exp>, args: Vec<Exp> },
-
-    // Allocate a struct
-    StructAlloc { ty: Type },
-    ArrayAlloc { base_ty: Type, length: Box<Exp> },
-
-    // Address of a struct field entry.
-    StructAddr { struct_ty: Type, ptr: Box<Exp>, field: usize },
-    // Address of an array entry.
-    ArrayAddr { base_ty: Type, ptr: Box<Exp>, index: Box<Exp> },
-    // Address of an array entry.
-    ArrayLengthAddr { ptr: Box<Exp> },
+    Call { ret_type: Type, fun: Box<Exp>, args: Vec<Exp> },
 
     Load { ty: Type, ptr: Box<Exp> },
 
-    // StructLoad { struct_ty: Type, ptr: Box<Exp>, field: usize },
-    // ArrayLoad { base_ty: Type, ptr: Box<Exp>, index: Box<Exp> },
-
     Binary { op: Bop, e1: Box<Exp>, e2: Box<Exp> },
     Unary { op: Uop, exp: Box<Exp> },
+    Cast { ty: Type, exp: Box<Exp> },
 
     Lit { lit: Lit },
 
-    Global { label: Name, ty: Name },
+    Global { name: Name, ty: Type },
     Temp { name: Name, ty: Type },
+
+    // Address of a struct field entry.
+    GetStructElementAddr { struct_ty: Type, ptr: Box<Exp>, field: usize },
+
+    // Address of an array entry.
+    GetArrayElementAddr { base_ty: Type, ptr: Box<Exp>, index: Box<Exp> },
+
+    // Address of the array length field.
+    GetArrayLengthAddr { ptr: Box<Exp> },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Type {
     I1, // bool
     I32,
@@ -93,16 +84,22 @@ pub enum Type {
     Ptr { ty: Box<Type> },        // LLVM: ty*
     Array { ty: Box<Type> },      // LLVM: { i32, [0 x ty] }
     Struct { fields: Vec<Type> }, // LLVM: { .. }
+    Fun { ret: Box<Type>, args: Vec<Type> },
     Void,
     EnvPtr, // LLVM: void*
     FunPtr, // LLVM: void*
+    Index,  // i32 or i64 depending on array index size
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Lit {
     I1 { value: bool },
     I32 { value: i32 },
     I64 { value: i64 },
     F32 { value: f32 },
     F64 { value: f64 },
+    Sizeof { ty: Type },
+    ArrayBaseOffset,      // i32 or i64 depending on array index size (should = 0)
+    ArrayLengthOffset,    // i32 or i64 depending on array index size (should = sizeof(Index))
+    StructFieldOffset { ty: Type, field: usize }, // word size
 }

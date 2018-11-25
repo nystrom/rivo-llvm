@@ -1,8 +1,10 @@
 use crate::mir::ops::*;
-use crate::mir::trees::Lit;
-use crate::mir::trees::Param;
-use crate::mir::trees::Type;
 use crate::common::names::*;
+
+// These are the same as mir trees, so just use them.
+pub use crate::mir::trees::Lit;
+pub use crate::mir::trees::Param;
+pub use crate::mir::trees::Type;
 
 #[derive(Clone, Debug)]
 pub struct Root {
@@ -28,7 +30,7 @@ pub struct Proc {
 pub enum Stm {
     Nop,
 
-    CJump { cmp: Cmp, e1: Exp, e2: Exp, if_true: Name, if_false: Name },
+    CJump { cmp: Exp, if_true: Name, if_false: Name },
     Jump { label: Name },
     Ret { exp: Exp },
 
@@ -41,12 +43,10 @@ pub enum Stm {
     Binary { dst: Name, op: Bop, e1: Exp, e2: Exp },
     Unary { dst: Name, op: Uop, exp: Exp },
 
-    Label { label: Name },
+    // Bitcast
+    Cast { dst: Name, ty: Type, exp: Exp },
 
-    // These should be calls, but we don't know the sizes before LLVM generation,
-    // so just leave as is.
-    StructAlloc { dst: Name, ty: Type },
-    ArrayAlloc { dst: Name, base_ty: Type, length: Exp },
+    Label { label: Name },
 
     // Address of a struct field entry.
     GetStructElementAddr { dst: Name, struct_ty: Type, ptr: Exp, field: usize },
@@ -63,13 +63,4 @@ pub enum Exp {
     Global { name: Name },
     Temp { name: Name },
     Lit { lit: Lit },
-}
-
-#[allow(non_camel_case_types)]
-#[derive(Copy, Clone, Debug)]
-pub enum Cmp {
-    Eq_i32, Ne_i32, Lt_i32, Gt_i32, Le_i32, Ge_i32,
-    Eq_i64, Ne_i64, Lt_i64, Gt_i64, Le_i64, Ge_i64,
-    Eq_f32, Ne_f32, Lt_f32, Gt_f32, Le_f32, Ge_f32,
-    Eq_f64, Ne_f64, Lt_f64, Gt_f64, Le_f64, Ge_f64,
 }

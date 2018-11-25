@@ -14,28 +14,20 @@ impl Translate {
 }
 
 struct ProcTranslator {
-    next_temp: u32,
-    next_label: u32,
 }
 
 impl ProcTranslator {
     fn new() -> Self {
         ProcTranslator {
-            next_temp: 0,
-            next_label: 0,
         }
     }
 
     fn new_temp(&mut self) -> Name {
-        let t = format!("t.lir.{}", self.next_temp);
-        self.next_temp += 1;
-        Name::new(&t)
+        Name::fresh("t.lir")
     }
 
     fn new_label(&mut self) -> Name {
-        let t = format!("L.lir.{}", self.next_label);
-        self.next_label += 1;
-        Name::new(&t)
+        Name::fresh("L.lir")
     }
 
     fn translate_proc(&mut self, p: &mir::Proc) -> lir::Proc {
@@ -58,61 +50,17 @@ impl ProcTranslator {
                     lir::Stm::Nop
                 ]
             },
-            mir::Stm::Error { message } => {
-                unimplemented!()
-            },
             mir::Stm::CJump { cond, if_true, if_false } => {
-                let t1 = self.new_temp();
-                let t2 = self.new_temp();
-                let mut ss = Vec::new();
+                let t = self.new_temp();
 
-                match &**cond {
-                    mir::Exp::Binary { op: Bop::Eq_i32, e1, e2 } => {
-                        let mut ss1 = self.translate_exp(t1, &*e1);
-                        let mut ss2 = self.translate_exp(t2, &*e2);
-
-                        ss.append(&mut ss1);
-                        ss.append(&mut ss2);
-                        ss.push(
-                            lir::Stm::CJump {
-                                cmp: lir::Cmp::Eq_i32,
-                                e1: lir::Exp::Temp { name: t1 },
-                                e2: lir::Exp::Temp { name: t2 },
-                                if_true: *if_true,
-                                if_false: *if_false,
-                            }
-                        );
-                    },
-                    mir::Exp::Binary { op: Bop::Ne_i32, e1, e2 } => {
-                        let mut ss1 = self.translate_exp(t1, &*e1);
-                        let mut ss2 = self.translate_exp(t2, &*e2);
-
-                        ss.append(&mut ss1);
-                        ss.append(&mut ss2);
-                        ss.push(
-                            lir::Stm::CJump {
-                                cmp: lir::Cmp::Ne_i32,
-                                e1: lir::Exp::Temp { name: t1 },
-                                e2: lir::Exp::Temp { name: t2 },
-                                if_true: *if_true,
-                                if_false: *if_false,
-                            }
-                        );
-                    },
-                    cond => {
-                        let mut ss1 = self.translate_exp(t1, &*cond);
-                        ss.append(&mut ss1);
-                        ss.push(
-                            lir::Stm::CJump {
-                                cmp: lir::Cmp::Ne_i32,
-                                e1: lir::Exp::Temp { name: t1 },
-                                e2: lir::Exp::Lit { lit: mir::Lit::I32 { value: 0 } },
-                                if_true: *if_true,
-                                if_false: *if_false,
-                            }
-                        );
-                    },
-                }
+                let mut ss = self.translate_exp(t, &*cond);
+                ss.push(
+                    lir::Stm::CJump {
+                        cmp: lir::Exp::Temp { name: t },
+                        if_true: *if_true,
+                        if_false: *if_false,
+                    }
+                );
                 ss
             },
             mir::Stm::Jump { label } => {
@@ -127,6 +75,16 @@ impl ProcTranslator {
             },
             mir::Stm::Move { ty, lhs, rhs } => {
                 self.translate_exp(*lhs, rhs)
+            },
+            mir::Stm::Return { exp } => {
+                let t = self.new_temp();
+                let mut ss = self.translate_exp(t, &*exp);
+                ss.push(
+                    lir::Stm::Ret {
+                        exp: lir::Exp::Temp { name: t }
+                    }
+                );
+                ss
             },
             mir::Stm::Store { ty, ptr, value } => {
                 let p = self.new_temp();
@@ -156,7 +114,7 @@ impl ProcTranslator {
                 }
                 ss.append(&mut self.translate_exp(dst, &*exp));
             },
-            mir::Exp::Call { fun, args } => {
+            mir::Exp::Call { ret_type, fun, args } => {
                 let mut arg_regs = Vec::new();
                 let f = self.new_temp();
                 ss.append(&mut self.translate_exp(f, &*fun));
@@ -173,13 +131,7 @@ impl ProcTranslator {
                     }
                 );
             },
-            mir::Exp::StructAlloc { ty } => {
-                unimplemented!()
-            },
-            mir::Exp::ArrayAlloc { base_ty, length } => {
-                unimplemented!()
-            },
-            mir::Exp::StructAddr { struct_ty, ptr, field } => {
+            mir::Exp::GetStructElementAddr { struct_ty, ptr, field } => {
                 let t = self.new_temp();
                 ss.append(&mut self.translate_exp(t, &*ptr));
                 ss.push(
@@ -191,7 +143,7 @@ impl ProcTranslator {
                     }
                 );
             },
-            mir::Exp::ArrayAddr { base_ty, ptr, index } => {
+            mir::Exp::GetArrayElementAddr { base_ty, ptr, index } => {
                 let a = self.new_temp();
                 let i = self.new_temp();
                 ss.append(&mut self.translate_exp(a, &*ptr));
@@ -205,7 +157,7 @@ impl ProcTranslator {
                     }
                 );
             },
-            mir::Exp::ArrayLengthAddr { ptr } => {
+            mir::Exp::GetArrayLengthAddr { ptr } => {
                 let t = self.new_temp();
                 ss.append(&mut self.translate_exp(t, &*ptr));
                 ss.push(
@@ -250,6 +202,17 @@ impl ProcTranslator {
                     }
                 );
             },
+            mir::Exp::Cast { ty, exp } => {
+                let t = self.new_temp();
+                ss.append(&mut self.translate_exp(t, &*exp));
+                ss.push(
+                    lir::Stm::Cast {
+                        dst,
+                        ty: ty.clone(),
+                        exp: lir::Exp::Temp { name: t }
+                    }
+                );
+            },
             mir::Exp::Lit { lit } => {
                 ss.push(
                     lir::Stm::Move {
@@ -258,11 +221,11 @@ impl ProcTranslator {
                     }
                 );
             },
-            mir::Exp::Global { label, ty } => {
+            mir::Exp::Global { name, ty } => {
                 ss.push(
                     lir::Stm::Move {
                         dst,
-                        src: lir::Exp::Global { name: *label }
+                        src: lir::Exp::Global { name: *name }
                     }
                 );
             },

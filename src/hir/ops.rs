@@ -116,22 +116,16 @@ pub enum Uop {
 
     Demote_f64_f32,
     Promote_f32_f64,
-
-    // Unboxing
-    Unbox_i32,
-    Unbox_i64,
-    Unbox_f32,
-    Unbox_f64,
-
-    // Boxing.
-    Box_i32,
-    Box_i64,
-    Box_f32,
-    Box_f64,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub enum Bop {
+    // Array index ops: these are either equivalent to Add/Mul_i32 or Add/Mul_i64, but left abstract here.
+    Add_index,
+    Mul_index,
+    // Add a pointer to an offset, returning a pointer.
+    Add_ptr_offset,
+
     // Boolean ops
     And_z,
     Or_z,
