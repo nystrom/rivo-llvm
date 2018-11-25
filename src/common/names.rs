@@ -38,7 +38,7 @@ impl Name {
     }
 
     pub fn fresh(prefix: &str) -> Name {
-        let s = format!("{}'{}", prefix, CACHE.lock().unwrap().len());
+        let s = format!("{}.{}", prefix, CACHE.lock().unwrap().len());
         Name::new(&s)
     }
 }
