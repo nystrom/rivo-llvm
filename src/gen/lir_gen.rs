@@ -1,4 +1,5 @@
 use crate::mir::trees as mir;
+use crate::mir::trees::Typed;
 use crate::lir::trees as lir;
 use crate::hir::ops::*;
 use crate::common::names::*;
@@ -31,12 +32,12 @@ impl ProcTranslator {
     }
 
     fn translate_proc(&mut self, p: &mir::Proc) -> lir::Proc {
-        let t = self.new_temp();
-        let mut ss = self.translate_exp(t, &p.body);
-        ss.push(lir::Stm::Ret { exp: lir::Exp::Temp { name: t } });
+        let mut ss = Vec::new();
+        let t = self.translate_exp_into(&p.body, &mut ss);
+        ss.push(lir::Stm::Ret { exp: t });
 
         lir::Proc {
-            ty: p.ty.clone(),
+            ret_type: p.ret_type.clone(),
             name: p.name.clone(),
             params: p.params.clone(),
             body: ss,
@@ -51,12 +52,11 @@ impl ProcTranslator {
                 ]
             },
             mir::Stm::CJump { cond, if_true, if_false } => {
-                let t = self.new_temp();
-
-                let mut ss = self.translate_exp(t, &*cond);
+                let mut ss = Vec::new();
+                let t = self.translate_exp_into(&*cond, &mut ss);
                 ss.push(
                     lir::Stm::CJump {
-                        cmp: lir::Exp::Temp { name: t },
+                        cmp: t,
                         if_true: *if_true,
                         if_false: *if_false,
                     }
@@ -74,30 +74,35 @@ impl ProcTranslator {
                 ]
             },
             mir::Stm::Move { ty, lhs, rhs } => {
-                self.translate_exp(*lhs, rhs)
+                let mut ss = Vec::new();
+                let t = self.translate_exp_into(&*rhs, &mut ss);
+                ss.push(
+                    lir::Stm::Move {
+                        dst: lir::Exp::Temp { ty: ty.clone(), name: *lhs },
+                        src: t,
+                    }
+                );
+                ss
             },
             mir::Stm::Return { exp } => {
-                let t = self.new_temp();
-                let mut ss = self.translate_exp(t, &*exp);
+                let mut ss = Vec::new();
+                let t = self.translate_exp_into(&*exp, &mut ss);
                 ss.push(
                     lir::Stm::Ret {
-                        exp: lir::Exp::Temp { name: t }
+                        exp: t
                     }
                 );
                 ss
             },
             mir::Stm::Store { ty, ptr, value } => {
-                let p = self.new_temp();
-                let v = self.new_temp();
-                let mut ssp = self.translate_exp(p, ptr);
-                let mut ssv = self.translate_exp(v, value);
                 let mut ss = Vec::new();
-                ss.append(&mut ssp);
-                ss.append(&mut ssv);
+                let p = self.translate_exp_into(&*ptr, &mut ss);
+                let v = self.translate_exp_into(&*value, &mut ss);
+
                 ss.push(
                     lir::Stm::Store {
-                        dst_addr: lir::Exp::Temp { name: p },
-                        src: lir::Exp::Temp { name: v },
+                        dst_addr: p,
+                        src: v,
                     }
                 );
                 ss
@@ -105,139 +110,142 @@ impl ProcTranslator {
         }
     }
 
-    fn translate_exp(&mut self, dst: Name, e: &mir::Exp) -> Vec<lir::Stm> {
-        let mut ss = Vec::new();
+    fn translate_exp_into(&mut self, e: &mir::Exp, ss: &mut Vec<lir::Stm>) -> lir::Exp {
+        let dst_ty = e.get_type();
+        let dst = lir::Exp::Temp { ty: dst_ty, name: self.new_temp() };
+
         match e {
             mir::Exp::Block { body, exp } => {
                 for s in body {
                     ss.append(&mut self.translate_stm(s));
                 }
-                ss.append(&mut self.translate_exp(dst, &*exp));
+                self.translate_exp_into(&*exp, ss)
             },
-            mir::Exp::Call { ret_type, fun, args } => {
+            mir::Exp::Call { fun_type, fun, args } => {
+                let f = self.translate_exp_into(&*fun, ss);
+
                 let mut arg_regs = Vec::new();
-                let f = self.new_temp();
-                ss.append(&mut self.translate_exp(f, &*fun));
                 for arg in args {
-                    let t = self.new_temp();
-                    ss.append(&mut self.translate_exp(t, &*arg));
-                    arg_regs.push(lir::Exp::Temp { name: t });
+                    let t = self.translate_exp_into(&*arg, ss);
+                    arg_regs.push(t);
                 }
+
                 ss.push(
                     lir::Stm::Call {
-                        dst,
-                        fun: lir::Exp::Temp { name: f },
+                        dst: dst.clone(),
+                        fun: f,
                         args: arg_regs,
                     }
                 );
+
+                dst
             },
             mir::Exp::GetStructElementAddr { struct_ty, ptr, field } => {
-                let t = self.new_temp();
-                ss.append(&mut self.translate_exp(t, &*ptr));
+                let p = self.translate_exp_into(&*ptr, ss);
+
                 ss.push(
                     lir::Stm::GetStructElementAddr {
-                        dst,
+                        dst: dst.clone(),
                         struct_ty: struct_ty.clone(),
-                        ptr: lir::Exp::Temp { name: t },
+                        ptr: p,
                         field: *field
                     }
                 );
+
+                dst
             },
             mir::Exp::GetArrayElementAddr { base_ty, ptr, index } => {
-                let a = self.new_temp();
-                let i = self.new_temp();
-                ss.append(&mut self.translate_exp(a, &*ptr));
-                ss.append(&mut self.translate_exp(i, &*index));
+                let p = self.translate_exp_into(&*ptr, ss);
+                let i = self.translate_exp_into(&*index, ss);
+
                 ss.push(
                     lir::Stm::GetArrayElementAddr {
-                        dst,
+                        dst: dst.clone(),
                         base_ty: base_ty.clone(),
-                        ptr: lir::Exp::Temp { name: a },
-                        index: lir::Exp::Temp { name: i },
+                        ptr: p,
+                        index: i,
                     }
                 );
+
+                dst
             },
             mir::Exp::GetArrayLengthAddr { ptr } => {
-                let t = self.new_temp();
-                ss.append(&mut self.translate_exp(t, &*ptr));
+                let p = self.translate_exp_into(&*ptr, ss);
+
                 ss.push(
                     lir::Stm::GetArrayLengthAddr {
-                        dst,
-                        ptr: lir::Exp::Temp { name: t }
+                        dst: dst.clone(),
+                        ptr: p,
                     }
                 );
+
+                dst
             },
             mir::Exp::Load { ty, ptr } => {
-                let t = self.new_temp();
-                ss.append(&mut self.translate_exp(t, &*ptr));
+                let p = self.translate_exp_into(&*ptr, ss);
+
                 ss.push(
                     lir::Stm::Load {
-                        dst,
-                        src_addr: lir::Exp::Temp { name: t }
+                        dst: dst.clone(),
+                        src_addr: p,
                     }
                 );
+
+                dst
             },
             mir::Exp::Binary { op, e1, e2 } => {
-                let t1 = self.new_temp();
-                let t2 = self.new_temp();
-                ss.append(&mut self.translate_exp(t1, &*e1));
-                ss.append(&mut self.translate_exp(t2, &*e2));
+                let t1 = self.translate_exp_into(&*e1, ss);
+                let t2 = self.translate_exp_into(&*e2, ss);
+
                 ss.push(
                     lir::Stm::Binary {
-                        dst,
+                        dst: dst.clone(),
                         op: *op,
-                        e1: lir::Exp::Temp { name: t1 },
-                        e2: lir::Exp::Temp { name: t2 },
+                        e1: t1,
+                        e2: t2,
                     }
                 );
+
+                dst
             },
             mir::Exp::Unary { op, exp } => {
-                let t = self.new_temp();
-                ss.append(&mut self.translate_exp(t, &*exp));
+                let t = self.translate_exp_into(&*exp, ss);
+
                 ss.push(
                     lir::Stm::Unary {
-                        dst,
+                        dst: dst.clone(),
                         op: *op,
-                        exp: lir::Exp::Temp { name: t }
+                        exp: t,
                     }
                 );
+
+                dst
             },
             mir::Exp::Cast { ty, exp } => {
-                let t = self.new_temp();
-                ss.append(&mut self.translate_exp(t, &*exp));
+                let t = self.translate_exp_into(&*exp, ss);
+
                 ss.push(
                     lir::Stm::Cast {
-                        dst,
+                        dst: dst.clone(),
                         ty: ty.clone(),
-                        exp: lir::Exp::Temp { name: t }
+                        exp: t,
                     }
                 );
+
+                dst
             },
             mir::Exp::Lit { lit } => {
-                ss.push(
-                    lir::Stm::Move {
-                        dst,
-                        src: lir::Exp::Lit { lit: lit.clone() }
-                    }
-                );
+                lir::Exp::Lit { lit: lit.clone() }
             },
             mir::Exp::Global { name, ty } => {
-                ss.push(
-                    lir::Stm::Move {
-                        dst,
-                        src: lir::Exp::Global { name: *name }
-                    }
-                );
+                lir::Exp::Global { name: *name, ty: ty.clone() }
+            },
+            mir::Exp::Function { name, ty } => {
+                lir::Exp::Function { name: *name, ty: ty.clone() }
             },
             mir::Exp::Temp { name, ty } => {
-                ss.push(
-                    lir::Stm::Move {
-                        dst,
-                        src: lir::Exp::Temp { name: *name }
-                    }
-                );
+                lir::Exp::Temp { name: *name, ty: ty.clone() }
             },
         }
-        ss
     }
 }

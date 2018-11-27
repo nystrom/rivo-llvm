@@ -1,9 +1,3 @@
-// needed for trace
-#![allow(unused_unsafe)]
-
-#[allow(non_upper_case_globals)]
-static mut depth: usize = 0;
-
 use llvm_sys::prelude::*;
 use llvm_sys as llvm;
 use std::ffi::CString;
@@ -11,9 +5,9 @@ use std::ptr;
 use ::libc::{c_uint, c_ulonglong, c_double};
 
 // Don't implement Clone or Copy for any wrapper that also implements Drop.
-#[derive(Debug, PartialEq)] pub struct Context(pub LLVMContextRef);
-#[derive(Debug, PartialEq)] pub struct Builder(pub LLVMBuilderRef);
-#[derive(Debug, PartialEq)] pub struct Module(pub LLVMModuleRef);
+#[derive(Copy, Clone, Debug, PartialEq)] pub struct Context(pub LLVMContextRef);
+#[derive(Copy, Clone, Debug, PartialEq)] pub struct Builder(pub LLVMBuilderRef);
+#[derive(Copy, Clone, Debug, PartialEq)] pub struct Module(pub LLVMModuleRef);
 #[derive(Copy, Clone, Debug, PartialEq)] pub struct Type(pub LLVMTypeRef);
 #[derive(Copy, Clone, Debug, PartialEq)] pub struct Value(pub LLVMValueRef);
 #[derive(Copy, Clone, Debug, PartialEq)] pub struct BB(pub LLVMBasicBlockRef);
@@ -79,7 +73,6 @@ macro_rules! c_bool {
     }
 }
 
-#[trace]
 impl Value {
     pub fn i1(v: bool) -> Value {
         Value(
@@ -120,7 +113,6 @@ impl Value {
     }
 }
 
-#[trace]
 impl Type {
     pub fn dump(&self) {
         unsafe {
@@ -153,13 +145,8 @@ impl Type {
 
     pub fn function(ret: Type, param_types: &[Type], is_var_arg: bool) -> Type {
         let n = param_types.len() as c_uint;
-        if n == 0 {
-            Type(unsafe { llvm::core::LLVMFunctionType(ret.0, ptr::null_mut(), 0, c_bool!(is_var_arg)) })
-        }
-        else {
-            let mut tys: Vec<LLVMTypeRef> = param_types.iter().map(|ty| ty.0).collect();
-            Type(unsafe { llvm::core::LLVMFunctionType(ret.0, tys.as_mut_ptr(), n, c_bool!(is_var_arg)) })
-        }
+        let mut tys: Vec<LLVMTypeRef> = param_types.iter().map(|ty| ty.0).collect();
+        Type(unsafe { llvm::core::LLVMFunctionType(ret.0, tys.as_mut_ptr(), n, c_bool!(is_var_arg)) })
     }
 
     pub fn array(element_type: Type, n: usize) -> Type {
@@ -172,21 +159,21 @@ impl Type {
 
     pub fn structure(element_types: &[Type], is_packed: bool) -> Type {
         let n = element_types.len() as c_uint;
-        if n == 0 {
-            Type(unsafe { llvm::core::LLVMStructType(ptr::null_mut(), 0, c_bool!(is_packed)) })
-        }
-        else {
-            let mut tys: Vec<LLVMTypeRef> = element_types.iter().map(|ty| ty.0).collect();
-            Type(unsafe { llvm::core::LLVMStructType(tys.as_mut_ptr(), n, c_bool!(is_packed)) })
-        }
+        let mut tys: Vec<LLVMTypeRef> = element_types.iter().map(|ty| ty.0).collect();
+        Type(unsafe { llvm::core::LLVMStructType(tys.as_mut_ptr(), n, c_bool!(is_packed)) })
     }
 }
 
-#[trace]
 impl Module {
     pub fn new(name: &str) -> Module {
         let cstr = CString::new(name).unwrap();
         Module(unsafe { llvm::core::LLVMModuleCreateWithName(cstr.as_ptr()) })
+    }
+
+    pub fn dispose(&self) {
+        unsafe {
+            llvm::core::LLVMDisposeModule(self.0);
+        }
     }
 
     pub fn add_function(&self, name: &str, ty: Type) -> Value {
@@ -206,12 +193,31 @@ impl Module {
             llvm::bit_writer::LLVMWriteBitcodeToFile(self.0, cstr.as_ptr());
         }
     }
+
+    pub fn get_named_global(&self, name: &str) -> Value {
+        let cstr = CString::new(name).unwrap();
+        Value(unsafe {
+            llvm::core::LLVMGetNamedGlobal(self.0, cstr.as_ptr())
+        })
+    }
+
+    pub fn get_named_function(&self, name: &str) -> Value {
+        let cstr = CString::new(name).unwrap();
+        Value(unsafe {
+            llvm::core::LLVMGetNamedFunction(self.0, cstr.as_ptr())
+        })
+    }
+
 }
 
-#[trace]
 impl Context {
     pub fn new() -> Context {
         Context(unsafe { llvm::core::LLVMContextCreate() })
+    }
+    pub fn dispose(&self) {
+        unsafe {
+            llvm::core::LLVMContextDispose(self.0);
+        }
     }
     pub fn new_builder(&self) -> Builder {
         Builder(unsafe { llvm::core::LLVMCreateBuilderInContext(self.0) })
@@ -250,13 +256,8 @@ impl Context {
 
     pub fn function_type(&self, ret: Type, param_types: &[Type], is_var_arg: bool) -> Type {
         let n = param_types.len() as c_uint;
-        if n == 0 {
-            Type(unsafe { llvm::core::LLVMFunctionType(ret.0, ptr::null_mut(), 0, c_bool!(is_var_arg)) })
-        }
-        else {
-            let mut tys: Vec<LLVMTypeRef> = param_types.iter().map(|ty| ty.0).collect();
-            Type(unsafe { llvm::core::LLVMFunctionType(ret.0, tys.as_mut_ptr(), n, c_bool!(is_var_arg)) })
-        }
+        let mut tys: Vec<LLVMTypeRef> = param_types.iter().map(|ty| ty.0).collect();
+        Type(unsafe { llvm::core::LLVMFunctionType(ret.0, tys.as_mut_ptr(), n, c_bool!(is_var_arg)) })
     }
 
     pub fn array_type(&self, element_type: Type, n: usize) -> Type {
@@ -269,13 +270,8 @@ impl Context {
 
     pub fn structure_type(&self, element_types: &[Type], is_packed: bool) -> Type {
         let n = element_types.len() as c_uint;
-        if n == 0 {
-            Type(unsafe { llvm::core::LLVMStructTypeInContext(self.0, ptr::null_mut(), 0, c_bool!(is_packed)) })
-        }
-        else {
-            let mut tys: Vec<LLVMTypeRef> = element_types.iter().map(|ty| ty.0).collect();
-            Type(unsafe { llvm::core::LLVMStructTypeInContext(self.0, tys.as_mut_ptr(), n, c_bool!(is_packed)) })
-        }
+        let mut tys: Vec<LLVMTypeRef> = element_types.iter().map(|ty| ty.0).collect();
+        Type(unsafe { llvm::core::LLVMStructTypeInContext(self.0, tys.as_mut_ptr(), n, c_bool!(is_packed)) })
     }
 
     pub fn append_bb(&self, function: Value, name: &str) -> BB {
@@ -286,10 +282,15 @@ impl Context {
     }
 }
 
-#[trace]
 impl Builder {
     pub fn new() -> Builder {
         Builder(unsafe { llvm::core::LLVMCreateBuilder() })
+    }
+
+    pub fn dispose(&self) {
+        unsafe {
+            llvm::core::LLVMDisposeBuilder(self.0);
+        }
     }
 
     pub fn position(&self, bb: BB, insn: Value) {
@@ -882,26 +883,26 @@ impl Builder {
 // void 	LLVMSetCmpXchgFailureOrdering (LLVMValueRef CmpXchgInst, LLVMAtomicOrdering Ordering)
 }
 
-impl Drop for Context {
-    fn drop(&mut self) {
-        unsafe {
-            llvm::core::LLVMContextDispose(self.0);
-        }
-    }
-}
-
-impl Drop for Builder {
-    fn drop(&mut self) {
-        unsafe {
-            llvm::core::LLVMDisposeBuilder(self.0);
-        }
-    }
-}
-
-impl Drop for Module {
-    fn drop(&mut self) {
-        unsafe {
-            llvm::core::LLVMDisposeModule(self.0);
-        }
-    }
-}
+// impl Drop for Context {
+//     fn drop(&mut self) {
+//         unsafe {
+//             llvm::core::LLVMContextDispose(self.0);
+//         }
+//     }
+// }
+//
+// impl Drop for Builder {
+//     fn drop(&mut self) {
+//         unsafe {
+//             llvm::core::LLVMDisposeBuilder(self.0);
+//         }
+//     }
+// }
+//
+// impl Drop for Module {
+//     fn drop(&mut self) {
+//         unsafe {
+//             llvm::core::LLVMDisposeModule(self.0);
+//         }
+//     }
+// }

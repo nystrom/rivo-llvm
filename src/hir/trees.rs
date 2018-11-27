@@ -14,14 +14,13 @@ pub enum Type {
     // Pointer types
     Array { ty: Box<Type> },
     Struct { fields: Vec<Param> },
-    Fun { ty: Box<Type>, params: Vec<Type> },
+    Fun { ret: Box<Type>, args: Vec<Type> },
 
     // Boxed/tagged values.
     // To use a boxed value, one must explicitly unbox.
     Box,
 
     // TODO: get rid of these.
-    FunPtr, // these are just placeholders for
     EnvPtr,
 }
 
@@ -48,31 +47,30 @@ pub struct Root {
 #[derive(Clone, Debug)]
 pub enum Def {
     VarDef { ty: Type, name: Name, exp: Box<Exp> },
-    FunDef { ty: Type, name: Name, params: Vec<Param>, body: Box<Exp> },
-    ExternDef { ty: Type, name: Name, params: Vec<Param> },
+    FunDef { ret_type: Type, name: Name, params: Vec<Param>, body: Box<Exp> },
+    ExternDef { ret_type: Type, name: Name, params: Vec<Param> },
 }
 
 #[derive(Clone, Debug)]
 pub enum Exp {
     NewArray { ty: Type, length: Box<Exp> },
     ArrayLit { ty: Type, exps: Vec<Exp> },
-    ArrayLoad { ty: Type, array: Box<Exp>, index: Box<Exp> },
+    ArrayLoad { bounds_check: bool, ty: Type, array: Box<Exp>, index: Box<Exp> },
     ArrayLength { array: Box<Exp> },
 
     Lit { lit: Lit },
-    Call { name: Name, args: Vec<Exp> },
+    Call { fun_type: Type, name: Name, args: Vec<Exp> },
     Var { name: Name, ty: Type },
 
     Binary { op: Bop, e1: Box<Exp>, e2: Box<Exp> },
     Unary { op: Uop, exp: Box<Exp> },
 
-    // Used for let too.
     Seq { body: Box<Stm>, exp: Box<Exp> },
 
     // Before lambda lifting.
     Let { param: Param, init: Box<Exp>, body: Box<Exp> },
-    Lambda { params: Vec<Param>, body: Box<Exp> },
-    Apply { fun: Box<Exp>, args: Vec<Exp> },
+    Lambda { ret_type: Type, params: Vec<Param>, body: Box<Exp> },
+    Apply { fun_type: Type, fun: Box<Exp>, args: Vec<Exp> },
 
     // Structs
     // These are tagged in Ivo, but we make the tag an explicit field in HIR.
@@ -97,7 +95,7 @@ pub enum Stm {
     Block { body: Vec<Stm> },
     Eval { exp: Box<Exp> },
     Assign { ty: Type, lhs: Name, rhs: Box<Exp> },
-    ArrayAssign { ty: Type, array: Box<Exp>, index: Box<Exp>, value: Box<Exp> },
+    ArrayAssign { bounds_check: bool, ty: Type, array: Box<Exp>, index: Box<Exp>, value: Box<Exp> },
     StructAssign { ty: Type, base: Box<Exp>, field: Name, value: Box<Exp> },
 }
 

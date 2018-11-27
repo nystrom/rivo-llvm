@@ -6,19 +6,25 @@ use crate::hir::trees as hir;
 use crate::lir::trees as lir;
 use crate::llvm;
 
-pub fn translate(name: &str, h: &hir::Root) -> llvm::Module {
-    println!("HIR {:#?}", h);
+pub fn translate(name: &str, h: &hir::Root) {
+    let l = translate_lir(name, h);
 
-    let m = mir_gen::Translate::translate(h);
-    println!("MIR {:#?}", m);
+    // Note we can't return the module here because it will escape.
+    let t = llvm_gen::Translate::new();
+    let m = t.translate(name, &l);
 
-    let l = lir_gen::Translate::translate(&m);
-    println!("LIR {:#?}", l);
+    m.dump();
+    m.dispose();
+}
 
-    let v = llvm_gen::Translate::new().translate(name, &l);
-    v.dump();
+pub fn translate_in_context(name: &str, h: &hir::Root, context: llvm::Context) -> llvm::Module {
+    let l = translate_lir(name, h);
 
-    v
+    let t = llvm_gen::Translate::new_in_context(context);
+    let m = t.translate(name, &l);
+    m.dump();
+
+    m
 }
 
 pub fn translate_lir(name: &str, h: &hir::Root) -> lir::Root {
@@ -37,6 +43,7 @@ pub fn translate_lir(name: &str, h: &hir::Root) -> lir::Root {
 mod tests {
     use super::*;
     use crate::hir::trees as hir;
+    use crate::hir::ops::*;
     use crate::common::names::*;
 
     #[test]
@@ -44,7 +51,7 @@ mod tests {
         let h = hir::Root {
             defs: vec![
                 hir::Def::FunDef {
-                    ty: hir::Type::I64,
+                    ret_type: hir::Type::I64,
                     name: Name::new("zero"),
                     params: vec![],
                     body: Box::new(
@@ -54,8 +61,75 @@ mod tests {
             ]
         };
 
-        let m = translate("test_fn_returns_0i64", &h);
-        m.dump();
+        translate("test_fn_returns_0i64", &h);
+    }
+
+    #[test]
+    fn test_fact_i64() {
+        let h = hir::Root {
+            defs: vec![
+                hir::Def::FunDef {
+                    ret_type: hir::Type::I64,
+                    name: Name::new("fact"),
+                    params: vec![
+                        hir::Param { ty: hir::Type::I64, name: Name::new("n") }
+                    ],
+                    body: Box::new(
+                        hir::Exp::Seq {
+                            body: Box::new(
+                                hir::Stm::IfThen {
+                                    cond: Box::new(
+                                        hir::Exp::Binary {
+                                            op: Bop::Eq_i64,
+                                            e1: Box::new(
+                                                hir::Exp::Var { ty: hir::Type::I64, name: Name::new("n") }
+                                            ),
+                                            e2: Box::new(
+                                                hir::Exp::Lit { lit: hir::Lit::I64 { value: 0 } }
+                                            )
+                                        }
+                                    ),
+                                    if_true: Box::new(
+                                        hir::Stm::Return {
+                                            exp: Box::new(
+                                                hir::Exp::Lit { lit: hir::Lit::I64 { value: 1 } }
+                                            )
+                                        }
+                                    ),
+                                }
+                            ),
+                            exp: Box::new(
+                                hir::Exp::Binary {
+                                    op: Bop::Mul_i64,
+                                    e1: Box::new(
+                                        hir::Exp::Var { ty: hir::Type::I64, name: Name::new("n") }
+                                    ),
+                                    e2: Box::new(
+                                        hir::Exp::Call {
+                                            fun_type: hir::Type::Fun { ret: Box::new(hir::Type::I64), args: vec![hir::Type::I64] },
+                                            name: Name::new("fact"),
+                                            args: vec![
+                                                hir::Exp::Binary {
+                                                    op: Bop::Sub_i64,
+                                                    e1: Box::new(
+                                                        hir::Exp::Var { ty: hir::Type::I64, name: Name::new("n") }
+                                                    ),
+                                                    e2: Box::new(
+                                                        hir::Exp::Lit { lit: hir::Lit::I64 { value: 1 } }
+                                                    )
+                                                }
+                                            ]
+                                        }
+                                    ),
+                                }
+                            )
+                        }
+                    )
+                }
+            ]
+        };
+
+        translate("test_fact_i64", &h);
     }
 
     #[test]
@@ -63,7 +137,7 @@ mod tests {
         let h = hir::Root {
             defs: vec![
                 hir::Def::FunDef {
-                    ty: hir::Type::I64,
+                    ret_type: hir::Type::I64,
                     name: Name::new("id_i64"),
                     params: vec![
                         hir::Param { ty: hir::Type::I64, name: Name::new("x") }
@@ -75,7 +149,6 @@ mod tests {
             ]
         };
 
-        let m = translate("test_identity_i64", &h);
-        m.dump();
+        translate("test_identity_i64", &h);
     }
 }

@@ -7,37 +7,81 @@ use crate::mir::trees as mir;
 use crate::mir::ops::*;
 use crate::lir::trees as lir;
 
-// 64-bit target
-const WORDSIZE: usize = 8;
-
 #[allow(non_upper_case_globals)]
 static mut depth: usize = 0;
 
+macro_rules! intrinsic {
+    ($self: expr, $name: expr, $v1: expr, ($ty1: expr) -> $retty: expr) => {
+        $self.builder.call(
+            $self.to_addr(&lir::Exp::Function {
+                ty: mir::Type::Fun {
+                    ret: Box::new($retty),
+                    args: vec![$ty1]
+                },
+                name: Name::new($name)
+            }),
+            &[$v1],
+            &$self.fresh_name())
+    };
+    ($self: expr, $name: expr, $v1: expr, $v2: expr, ($ty1: expr, $ty2: expr) -> $retty: expr) => {
+        $self.builder.call(
+            $self.to_addr(&lir::Exp::Function {
+                ty: mir::Type::Fun {
+                    ret: Box::new($retty),
+                    args: vec![$ty1, $ty2]
+                },
+                name: Name::new($name)
+            }),
+            &[$v1, $v2],
+            &$self.fresh_name())
+    };
+    ($self: expr, $name: expr, $v1: expr, $v2: expr, $v3: expr, ($ty1: expr, $ty2: expr, $ty3: expr) -> $retty: expr) => {
+        $self.builder.call(
+            $self.to_addr(&lir::Exp::Function {
+                ty: mir::Type::Fun {
+                    ret: Box::new($retty),
+                    args: vec![$ty1, $ty2, $ty3]
+                },
+                name: Name::new($name)
+            }),
+            &[$v1, $v2, $v3],
+            &$self.fresh_name())
+    };
+}
+
+
+// 64-bit target
+const WORDSIZE: usize = 8;
+
 pub struct Translate {
-    context: llvm::Context,
+    pub context: llvm::Context,
 }
 
 impl Translate {
     pub fn new() -> Translate {
         crate::llvm::init();
-
         Translate {
             context: llvm::Context::new(),
         }
     }
 
+    pub fn new_in_context(context: llvm::Context) -> Translate {
+        crate::llvm::init();
+        Translate {
+            context: context,
+        }
+    }
+
     pub fn translate(&self, name: &str, r: &lir::Root) -> llvm::Module {
-        let module = llvm::Module::new(name);
         let builder = self.context.new_builder();
+        let module = llvm::Module::new(name);
 
         for p in &r.procs {
             let t = ProcTranslator::new(&self.context, &module, &builder);
             t.translate_proc(p);
         }
 
-        // Dump the module as IR to stdout.
-        module.dump();
-
+        builder.dispose();
         module
     }
 
@@ -48,7 +92,7 @@ impl Translate {
             lir::Type::I64 => context.i64_type(),
             lir::Type::F32 => context.float_type(),
             lir::Type::F64 => context.double_type(),
-            lir::Type::Index => context.i64_type(),
+            lir::Type::Word => if WORDSIZE == 8 { context.i64_type() } else { context.i32_type() },
             lir::Type::Void => context.void_type(),
             lir::Type::Ptr { ty } => {
                 let t = Translate::to_type(context, ty);
@@ -57,7 +101,7 @@ impl Translate {
             lir::Type::Array { ty } => {
                 let t = Translate::to_type(context, ty);
                 let ps = vec![
-                    Translate::to_type(context, &lir::Type::Index),
+                    Translate::to_type(context, &lir::Type::Word),
                     context.array_type(t, 0),
                 ];
                 context.structure_type(&ps, false)
@@ -75,7 +119,6 @@ impl Translate {
             // TODO get rid of these
             // void*
             lir::Type::EnvPtr => context.pointer_type(Translate::to_type(context, &lir::Type::Void)),
-            lir::Type::FunPtr => context.pointer_type(Translate::to_type(context, &lir::Type::Void)),
         }
     }
 }
@@ -106,7 +149,7 @@ impl<'a> ProcTranslator<'a> {
     }
 
     fn translate_proc(&self, p: &lir::Proc) {
-        let ty = self.to_type(&p.ty);
+        let ty = self.to_type(&p.ret_type);
         let tys: Vec<llvm::Type> = p.params.iter().map(|p| self.to_type(&p.ty)).collect();
         let fun_ty = llvm::Type::function(ty, &tys, false);
 
@@ -145,12 +188,13 @@ impl<'a> BodyTranslator<'a> {
         }
 
         // Emit an alloca for each temporary, except params.
-        for x in &temps {
+        for (x, xty) in &temps {
             if self.params.get(&x).is_some() {
                 continue;
             }
 
-            let insn = self.builder.alloca(llvm::Type::i64(), &self.fresh_name());
+            let ty = self.to_type(xty);
+            let insn = self.builder.alloca(ty, &self.fresh_name());
             self.temps.insert(*x, insn.clone());
         }
 
@@ -165,7 +209,7 @@ impl<'a> BodyTranslator<'a> {
                     if ! last_was_jump {
                         // Jump from the previous BB to here if the last instruction
                         // of the previous BB was not a jump.
-                        let insn = self.builder.br(bb);
+                        self.builder.br(bb);
                     }
 
                     self.builder.position_at_end(bb);
@@ -192,20 +236,23 @@ impl<'a> BodyTranslator<'a> {
         }
     }
 
-// http://llvm.org/doxygen/group__LLVMCCoreInstructionBuilder.html
-
     fn fresh_name(&self) -> String {
         Name::fresh("t.llvm").to_string()
     }
 
     fn to_value(&mut self, e: &lir::Exp) -> llvm::Value {
         match e {
-            lir::Exp::Global { name } => {
+            lir::Exp::Global { name, ty } => {
                 let a = self.to_addr(e);
                 let insn = self.builder.load(a, &self.fresh_name());
                 insn
             },
-            lir::Exp::Temp { name } => {
+            lir::Exp::Function { name, ty } => {
+                let a = self.to_addr(e);
+                let insn = self.builder.load(a, &self.fresh_name());
+                insn
+            },
+            lir::Exp::Temp { name, ty } => {
                 match self.params.get(&name) {
                     Some(v) => {
                         v.clone()
@@ -271,17 +318,15 @@ impl<'a> BodyTranslator<'a> {
 
     fn to_addr(&mut self, e: &lir::Exp) -> llvm::Value {
         match e {
-            lir::Exp::Global { name } => {
-                unimplemented!()
+            lir::Exp::Global { name, ty } => {
+                self.module.get_named_global(&name.to_string())
             },
-            lir::Exp::Temp { name } => {
+            lir::Exp::Function { name, ty } => {
+                self.module.get_named_function(&name.to_string())
+            },
+            lir::Exp::Temp { name, ty } => {
                 match self.temps.get(&name) {
-                    Some(v) => {
-                        println!("{} -> {:?}", name, v);
-                        v.dump();
-                        println!();
-                        v.clone()
-                    },
+                    Some(v) => *v,
                     None => unreachable!(),  // shouldn't happen since we pre-filled the temps table.
                 }
             },
@@ -330,20 +375,19 @@ impl<'a> BodyTranslator<'a> {
             lir::Stm::Load { dst, src_addr } => {
                 let p = self.to_addr(src_addr);
                 let v = self.builder.load(p, &self.fresh_name());
-                let x = self.to_addr(&lir::Exp::Temp { name: *dst });
+                let x = self.to_addr(dst);
                 self.builder.store(v, x)
             },
             lir::Stm::Move { dst, src } => {
-                let x = self.to_addr(&lir::Exp::Temp { name: *dst });
+                let x = self.to_addr(dst);
                 let v = self.to_value(src);
                 self.builder.store(v, x)
             },
             lir::Stm::Call { dst, fun, args } => {
-                unimplemented!();
                 let f = self.to_addr(fun);
                 let vs: Vec<llvm::Value> = args.iter().map(|a| self.to_value(a)).collect();
                 let v = self.builder.call(f, &vs, &self.fresh_name());
-                let x = self.to_addr(&lir::Exp::Temp { name: *dst });
+                let x = self.to_addr(dst);
                 self.builder.store(v, x)
             },
             lir::Stm::Binary { dst, op, e1, e2 } => {
@@ -388,6 +432,15 @@ impl<'a> BodyTranslator<'a> {
                     Bop::Xor_i32 => self.builder.xor(a1, a2, &self.fresh_name()),
                     Bop::Xor_i64 => self.builder.xor(a1, a2, &self.fresh_name()),
 
+                    Bop::Shl_i32 => self.builder.shl(a1, a2, &self.fresh_name()),
+                    Bop::Shl_i64 => self.builder.shl(a1, a2, &self.fresh_name()),
+
+                    Bop::Shr_u_i32 => self.builder.lshr(a1, a2, &self.fresh_name()),
+                    Bop::Shr_u_i64 => self.builder.lshr(a1, a2, &self.fresh_name()),
+
+                    Bop::Shr_i32 => self.builder.ashr(a1, a2, &self.fresh_name()),
+                    Bop::Shr_i64 => self.builder.ashr(a1, a2, &self.fresh_name()),
+
                     Bop::Eq_z => self.builder.icmp(llvm::IntPredicate::EQ, a1, a2, &self.fresh_name()),
                     Bop::Eq_i32 => self.builder.icmp(llvm::IntPredicate::EQ, a1, a2, &self.fresh_name()),
                     Bop::Eq_i64 => self.builder.icmp(llvm::IntPredicate::EQ, a1, a2, &self.fresh_name()),
@@ -428,9 +481,32 @@ impl<'a> BodyTranslator<'a> {
                     Bop::Ge_f32 => self.builder.fcmp(llvm::RealPredicate::OrderedGE, a1, a2, &self.fresh_name()),
                     Bop::Ge_f64 => self.builder.fcmp(llvm::RealPredicate::OrderedGE, a1, a2, &self.fresh_name()),
 
-                    _ => unimplemented!(),
+                    Bop::Min_f32 => intrinsic!(self, "llvm.minimum.f32", a1, a2, (mir::Type::F32, mir::Type::F32) -> mir::Type::F32),
+                    Bop::Min_f64 => intrinsic!(self, "llvm.minimum.f64", a1, a2, (mir::Type::F64, mir::Type::F64) -> mir::Type::F64),
+                    Bop::Max_f32 => intrinsic!(self, "llvm.maximum.f32", a1, a2, (mir::Type::F32, mir::Type::F32) -> mir::Type::F32),
+                    Bop::Max_f64 => intrinsic!(self, "llvm.maximum.f64", a1, a2, (mir::Type::F64, mir::Type::F64) -> mir::Type::F64),
+
+                    Bop::Copysign_f32 => intrinsic!(self, "llvm.copysign.f32", a1, a2, (mir::Type::F32, mir::Type::F32) -> mir::Type::F32),
+                    Bop::Copysign_f64 => intrinsic!(self, "llvm.copysign.f64", a1, a2, (mir::Type::F64, mir::Type::F64) -> mir::Type::F64),
+
+                    Bop::Add_word => self.builder.add(a1, a2, &self.fresh_name()),
+                    Bop::Mul_word => self.builder.mul(a1, a2, &self.fresh_name()),
+
+                    // And and or can be implemented with bitsize operations since there's only one bit.
+                    Bop::And_z => self.builder.and(a1, a2, &self.fresh_name()),
+                    Bop::Or_z => self.builder.or(a1, a2, &self.fresh_name()),
+
+                    // Use the funnel shift intrinsics to perform rotations.
+                    // The first two arguments are the same.
+                    Bop::Rotl_i32 => intrinsic!(self, "llvm.fshl.i32", a1, a1, a2, (mir::Type::I32, mir::Type::I32, mir::Type::I32) -> mir::Type::I32),
+                    Bop::Rotl_i64 => intrinsic!(self, "llvm.fshl.i64", a1, a1, a2, (mir::Type::I64, mir::Type::I64, mir::Type::I64) -> mir::Type::I64),
+                    Bop::Rotr_i32 => intrinsic!(self, "llvm.fshr.i32", a1, a1, a2, (mir::Type::I32, mir::Type::I32, mir::Type::I32) -> mir::Type::I32),
+                    Bop::Rotr_i64 => intrinsic!(self, "llvm.fshr.i64", a1, a1, a2, (mir::Type::I64, mir::Type::I64, mir::Type::I64) -> mir::Type::I64),
+
+                    Bop::Atan2_f32 => unimplemented!(),
+                    Bop::Atan2_f64 => unimplemented!(),
                 };
-                let x = self.to_addr(&lir::Exp::Temp { name: *dst });
+                let x = self.to_addr(dst);
                 self.builder.store(v, x)
             },
             lir::Stm::Unary { dst, op, exp } => {
@@ -439,16 +515,121 @@ impl<'a> BodyTranslator<'a> {
                     Uop::Not_z => self.builder.not(e, &self.fresh_name()),
                     Uop::Neg_f32 => self.builder.fneg(e, &self.fresh_name()),
                     Uop::Neg_f64 => self.builder.fneg(e, &self.fresh_name()),
-                    _ => unimplemented!(),
+
+                    Uop::Ctz_i32 => intrinsic!(self, "llvm.cttz.i32", e, (mir::Type::I32) -> mir::Type::I32),
+                    Uop::Clz_i32 => intrinsic!(self, "llvm.ctlz.i32", e, (mir::Type::I32) -> mir::Type::I32),
+                    Uop::Popcount_i32 => intrinsic!(self, "llvm.ctpop.i32", e, (mir::Type::I32) -> mir::Type::I32),
+                    Uop::Eqz_i32 => unimplemented!(),
+                    Uop::Complement_i32 => unimplemented!(),
+
+                    Uop::Ctz_i64 => intrinsic!(self, "llvm.cttz.i64", e, (mir::Type::I64) -> mir::Type::I64),
+                    Uop::Clz_i64 => intrinsic!(self, "llvm.ctlz.i64", e, (mir::Type::I64) -> mir::Type::I64),
+                    Uop::Popcount_i64 => intrinsic!(self, "llvm.ctpop.i64", e, (mir::Type::I64) -> mir::Type::I64),
+                    Uop::Eqz_i64 => unimplemented!(),
+                    Uop::Complement_i64 => unimplemented!(),
+
+                    Uop::Abs_f32 => intrinsic!(self, "llvm.fabs.f32", e, (mir::Type::F32) -> mir::Type::F32),
+
+                    Uop::Ceil_f32 => intrinsic!(self, "llvm.ceil.f32", e, (mir::Type::F32) -> mir::Type::F32),
+                    Uop::Floor_f32 => intrinsic!(self, "llvm.floor.f32", e, (mir::Type::F32) -> mir::Type::F32),
+                    Uop::Trunc_f32 => intrinsic!(self, "llvm.trunc.f32", e, (mir::Type::F32) -> mir::Type::F32),
+                    Uop::Nearest_f32 => intrinsic!(self, "llvm.round.f32", e, (mir::Type::F32) -> mir::Type::F32),
+
+                    Uop::Exp_f32 => intrinsic!(self, "llvm.exp.f32", e, (mir::Type::F32) -> mir::Type::F32),
+                    Uop::Log_f32 => intrinsic!(self, "llvm.log.f32", e, (mir::Type::F32) -> mir::Type::F32),
+                    Uop::Sqrt_f32 => intrinsic!(self, "llvm.sqrt.f32", e, (mir::Type::F32) -> mir::Type::F32),
+                    Uop::Pow_f32 => intrinsic!(self, "llvm.pow.f32", e, (mir::Type::F32) -> mir::Type::F32),
+                    Uop::Logb_f32 => unimplemented!(),
+                    Uop::Sin_f32 => intrinsic!(self, "llvm.sin.f32", e, (mir::Type::F32) -> mir::Type::F32),
+                    Uop::Cos_f32 => intrinsic!(self, "llvm.cos.f32", e, (mir::Type::F32) -> mir::Type::F32),
+                    Uop::Tan_f32 => intrinsic!(self, "llvm.tan.f32", e, (mir::Type::F32) -> mir::Type::F32),
+                    Uop::Asin_f32 => unimplemented!(),
+                    Uop::Acos_f32 => unimplemented!(),
+                    Uop::Atan_f32 => unimplemented!(),
+                    Uop::Sinh_f32 => unimplemented!(),
+                    Uop::Cosh_f32 => unimplemented!(),
+                    Uop::Tanh_f32 => unimplemented!(),
+                    Uop::Asinh_f32 => unimplemented!(),
+                    Uop::Acosh_f32 => unimplemented!(),
+                    Uop::Atanh_f32 => unimplemented!(),
+
+                    Uop::IsNan_f32 => unimplemented!(),
+                    Uop::IsInf_f32 => unimplemented!(),
+                    Uop::IsDenormalized_f32 => unimplemented!(),
+                    Uop::IsNegativeZero_f32 => unimplemented!(),
+                    Uop::IsIEEE_f32 => unimplemented!(),
+
+                    Uop::Abs_f64 => intrinsic!(self, "llvm.fabs.f64", e, (mir::Type::F64) -> mir::Type::F64),
+
+                    Uop::Ceil_f64 => intrinsic!(self, "llvm.ceil.f64", e, (mir::Type::F64) -> mir::Type::F64),
+                    Uop::Floor_f64 => intrinsic!(self, "llvm.floor.f64", e, (mir::Type::F64) -> mir::Type::F64),
+                    Uop::Trunc_f64 => intrinsic!(self, "llvm.trunc.f64", e, (mir::Type::F64) -> mir::Type::F64),
+                    Uop::Nearest_f64 => intrinsic!(self, "llvm.round.f64", e, (mir::Type::F64) -> mir::Type::F64),
+
+                    Uop::Exp_f64 => intrinsic!(self, "llvm.exp.f64", e, (mir::Type::F64) -> mir::Type::F64),
+                    Uop::Log_f64 => intrinsic!(self, "llvm.log.f64", e, (mir::Type::F64) -> mir::Type::F64),
+                    Uop::Sqrt_f64 => intrinsic!(self, "llvm.sqrt.f64", e, (mir::Type::F64) -> mir::Type::F64),
+                    Uop::Pow_f64 => intrinsic!(self, "llvm.pos.f64", e, (mir::Type::F64) -> mir::Type::F64),
+                    Uop::Logb_f64 => unimplemented!(),
+                    Uop::Sin_f64 => intrinsic!(self, "llvm.sin.f64", e, (mir::Type::F64) -> mir::Type::F64),
+                    Uop::Cos_f64 => intrinsic!(self, "llvm.cos.f64", e, (mir::Type::F64) -> mir::Type::F64),
+                    Uop::Tan_f64 => intrinsic!(self, "llvm.tan.f64", e, (mir::Type::F64) -> mir::Type::F64),
+                    Uop::Asin_f64 => unimplemented!(),
+                    Uop::Acos_f64 => unimplemented!(),
+                    Uop::Atan_f64 => unimplemented!(),
+                    Uop::Sinh_f64 => unimplemented!(),
+                    Uop::Cosh_f64 => unimplemented!(),
+                    Uop::Tanh_f64 => unimplemented!(),
+                    Uop::Asinh_f64 => unimplemented!(),
+                    Uop::Acosh_f64 => unimplemented!(),
+                    Uop::Atanh_f64 => unimplemented!(),
+
+                    Uop::IsNan_f64 => unimplemented!(),
+                    Uop::IsInf_f64 => unimplemented!(),
+                    Uop::IsDenormalized_f64 => unimplemented!(),
+                    Uop::IsNegativeZero_f64 => unimplemented!(),
+                    Uop::IsIEEE_f64 => unimplemented!(),
+
+                    Uop::Wrap_i64_i32 => self.builder.trunc(e, self.to_type(&mir::Type::I32), &self.fresh_name()),
+
+                    Uop::Trunc_s_f32_i32 => self.builder.fp_to_si(e, self.to_type(&mir::Type::I32), &self.fresh_name()),
+                    Uop::Trunc_s_f64_i32 => self.builder.fp_to_si(e, self.to_type(&mir::Type::I32), &self.fresh_name()),
+                    Uop::Trunc_u_f32_i32 => self.builder.fp_to_ui(e, self.to_type(&mir::Type::I32), &self.fresh_name()),
+                    Uop::Trunc_u_f64_i32 => self.builder.fp_to_ui(e, self.to_type(&mir::Type::I32), &self.fresh_name()),
+                    Uop::Trunc_s_f32_i64 => self.builder.fp_to_si(e, self.to_type(&mir::Type::I64), &self.fresh_name()),
+                    Uop::Trunc_s_f64_i64 => self.builder.fp_to_si(e, self.to_type(&mir::Type::I64), &self.fresh_name()),
+                    Uop::Trunc_u_f32_i64 => self.builder.fp_to_ui(e, self.to_type(&mir::Type::I64), &self.fresh_name()),
+                    Uop::Trunc_u_f64_i64 => self.builder.fp_to_ui(e, self.to_type(&mir::Type::I64), &self.fresh_name()),
+
+                    Uop::Extend_s_i32_i64 => self.builder.sext(e, self.to_type(&mir::Type::I64), &self.fresh_name()),
+                    Uop::Extend_u_i32_i64 => self.builder.zext(e, self.to_type(&mir::Type::I64), &self.fresh_name()),
+
+                    Uop::Reinterpret_f32_i32 => self.builder.bitcast(e, self.to_type(&mir::Type::I32), &self.fresh_name()),
+                    Uop::Reinterpret_f64_i64 => self.builder.bitcast(e, self.to_type(&mir::Type::I64), &self.fresh_name()),
+                    Uop::Reinterpret_i32_f32 => self.builder.bitcast(e, self.to_type(&mir::Type::F32), &self.fresh_name()),
+                    Uop::Reinterpret_i64_f64 => self.builder.bitcast(e, self.to_type(&mir::Type::F64), &self.fresh_name()),
+
+                    Uop::Convert_s_i32_f32 => self.builder.si_to_fp(e, self.to_type(&mir::Type::F32), &self.fresh_name()),
+                    Uop::Convert_u_i32_f32 => self.builder.ui_to_fp(e, self.to_type(&mir::Type::F32), &self.fresh_name()),
+                    Uop::Convert_s_i64_f32 => self.builder.si_to_fp(e, self.to_type(&mir::Type::F32), &self.fresh_name()),
+                    Uop::Convert_u_i64_f32 => self.builder.ui_to_fp(e, self.to_type(&mir::Type::F32), &self.fresh_name()),
+                    Uop::Convert_s_i32_f64 => self.builder.si_to_fp(e, self.to_type(&mir::Type::F64), &self.fresh_name()),
+                    Uop::Convert_u_i32_f64 => self.builder.ui_to_fp(e, self.to_type(&mir::Type::F64), &self.fresh_name()),
+                    Uop::Convert_s_i64_f64 => self.builder.si_to_fp(e, self.to_type(&mir::Type::F64), &self.fresh_name()),
+                    Uop::Convert_u_i64_f64 => self.builder.ui_to_fp(e, self.to_type(&mir::Type::F64), &self.fresh_name()),
+
+                    Uop::Demote_f64_f32 => self.builder.fptrunc(e, self.to_type(&mir::Type::F32), &self.fresh_name()),
+                    Uop::Promote_f32_f64 => self.builder.fpext(e, self.to_type(&mir::Type::F32), &self.fresh_name()),
                 };
-                let x = self.to_addr(&lir::Exp::Temp { name: *dst });
+
+                let x = self.to_addr(dst);
                 self.builder.store(v, x)
             },
             lir::Stm::Cast { dst, ty, exp } => {
                 let t = self.to_type(ty);
                 let e = self.to_value(exp);
                 let v = self.builder.bitcast(e, t, &self.fresh_name());
-                let x = self.to_addr(&lir::Exp::Temp { name: *dst });
+                let x = self.to_addr(dst);
                 self.builder.store(v, x)
             },
             lir::Stm::GetStructElementAddr { dst, struct_ty, ptr, field: usize } => {
@@ -475,15 +656,16 @@ impl<'a> BodyTranslator<'a> {
 struct TempFinder;
 
 impl TempFinder {
-    fn add_temps_for_exp(e: &lir::Exp, temps: &mut HashSet<Name>) {
+    fn add_temps_for_exp(e: &lir::Exp, temps: &mut HashSet<(Name, mir::Type)>) {
         match e {
-            lir::Exp::Global { name } => {},
-            lir::Exp::Temp { name } => { temps.insert(*name); }
+            lir::Exp::Global { name, ty } => {},
+            lir::Exp::Function { name, ty } => {},
+            lir::Exp::Temp { name, ty } => { temps.insert((*name, ty.clone())); }
             lir::Exp::Lit { lit } => {},
         }
     }
 
-    fn add_temps_for_stm(s: &lir::Stm, temps: &mut HashSet<Name>) {
+    fn add_temps_for_stm(s: &lir::Stm, temps: &mut HashSet<(Name, mir::Type)>) {
         match s {
             lir::Stm::Nop => {},
             lir::Stm::CJump { cmp, if_true, if_false } => {
@@ -498,46 +680,46 @@ impl TempFinder {
                 TempFinder::add_temps_for_exp(src, temps);
             },
             lir::Stm::Load { dst, src_addr } => {
+                TempFinder::add_temps_for_exp(dst, temps);
                 TempFinder::add_temps_for_exp(src_addr, temps);
-                temps.insert(*dst);
             },
             lir::Stm::Move { dst, src } => {
+                TempFinder::add_temps_for_exp(dst, temps);
                 TempFinder::add_temps_for_exp(src, temps);
-                temps.insert(*dst);
             },
             lir::Stm::Call { dst, fun, args } => {
+                TempFinder::add_temps_for_exp(dst, temps);
                 TempFinder::add_temps_for_exp(fun, temps);
                 for arg in args {
                     TempFinder::add_temps_for_exp(arg, temps);
                 }
-                temps.insert(*dst);
             },
             lir::Stm::Binary { dst, op, e1, e2 } => {
+                TempFinder::add_temps_for_exp(dst, temps);
                 TempFinder::add_temps_for_exp(e1, temps);
                 TempFinder::add_temps_for_exp(e2, temps);
-                temps.insert(*dst);
             },
             lir::Stm::Unary { dst, op, exp } => {
+                TempFinder::add_temps_for_exp(dst, temps);
                 TempFinder::add_temps_for_exp(exp, temps);
-                temps.insert(*dst);
             },
             lir::Stm::Cast { dst, ty, exp } => {
+                TempFinder::add_temps_for_exp(dst, temps);
                 TempFinder::add_temps_for_exp(exp, temps);
-                temps.insert(*dst);
             },
             lir::Stm::Label { label } => {},
             lir::Stm::GetStructElementAddr { dst, struct_ty, ptr, field: usize } => {
+                TempFinder::add_temps_for_exp(dst, temps);
                 TempFinder::add_temps_for_exp(ptr, temps);
-                temps.insert(*dst);
             },
             lir::Stm::GetArrayElementAddr { dst, base_ty, ptr, index } => {
+                TempFinder::add_temps_for_exp(dst, temps);
                 TempFinder::add_temps_for_exp(ptr, temps);
                 TempFinder::add_temps_for_exp(index, temps);
-                temps.insert(*dst);
             },
             lir::Stm::GetArrayLengthAddr { dst, ptr } => {
+                TempFinder::add_temps_for_exp(dst, temps);
                 TempFinder::add_temps_for_exp(ptr, temps);
-                temps.insert(*dst);
             },
         }
     }

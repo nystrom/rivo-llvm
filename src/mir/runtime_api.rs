@@ -4,14 +4,14 @@ use crate::mir::trees as mir;
 pub fn alloc() -> mir::Exp {
     mir::Exp::Global {
         name: Name::new("malloc"),
-        ty: mir::Type::FunPtr,
+        ty: mir::Type::Fun { ret: Box::new(mir::Type::EnvPtr), args: vec![mir::Type::I32] },
     }
 }
 
 pub fn panic() -> mir::Exp {
     mir::Exp::Global {
         name: Name::new("panic"),
-        ty: mir::Type::FunPtr,
+        ty: mir::Type::Fun { ret: Box::new(mir::Type::Void), args: vec![] },
     }
 }
 
@@ -27,7 +27,7 @@ pub fn boxer(ty: &mir::Type) -> mir::Exp {
 
     mir::Exp::Global {
         name: Name::new(name),
-        ty: mir::Type::FunPtr,
+        ty: mir::Type::Fun { ret: Box::new(mir::Type::EnvPtr), args: vec![ty.clone()] },
     }
 }
 
@@ -43,6 +43,6 @@ pub fn unboxer(ty: &mir::Type) -> mir::Exp {
 
     mir::Exp::Global {
         name: Name::new(name),
-        ty: mir::Type::FunPtr,
+        ty: mir::Type::Fun { ret: Box::new(ty.clone()), args: vec![mir::Type::EnvPtr]},
     }
 }

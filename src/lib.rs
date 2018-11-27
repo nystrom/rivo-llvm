@@ -6,12 +6,9 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 #![allow(unreachable_code)]
-// #![allow(unused_must_use)]
 
-#![feature(duration_as_u128)]
-#![feature(vec_resize_default)]
-#![feature(vec_remove_item)]
 #![feature(nll)]
+#![feature(box_patterns)]
 
 extern crate num;
 extern crate pretty;
@@ -43,3 +40,4 @@ pub mod lir;
 pub mod llvm;
 pub mod gen;
 pub mod common;
+pub mod jit;

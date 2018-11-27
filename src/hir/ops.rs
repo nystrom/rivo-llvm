@@ -120,11 +120,9 @@ pub enum Uop {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Bop {
-    // Array index ops: these are either equivalent to Add/Mul_i32 or Add/Mul_i64, but left abstract here.
-    Add_index,
-    Mul_index,
-    // Add a pointer to an offset, returning a pointer.
-    Add_ptr_offset,
+    // These are either equivalent to Add/Mul_i32 or Add/Mul_i64, but left abstract here.
+    Add_word,
+    Mul_word,
 
     // Boolean ops
     And_z,

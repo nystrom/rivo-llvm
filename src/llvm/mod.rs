@@ -32,13 +32,13 @@ pub fn init() {
         }
 
         init_target();
+
+        println!("LLVM initialized!");
     });
 
     if INIT_FAILED.load(Ordering::SeqCst) {
         panic!("Couldn't enable multi-threaded x86 LLVM");
     }
-
-    println!("LLVM initialized!");
 }
 
 
