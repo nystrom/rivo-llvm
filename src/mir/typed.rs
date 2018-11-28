@@ -168,6 +168,9 @@ impl Typed for Bop {
             Bop::Eq_z => Type::I1,
             Bop::Ne_z => Type::I1,
 
+            Bop::Eq_ptr => Type::I1,
+            Bop::Ne_ptr => Type::I1,
+
             Bop::Add_i32 => Type::I32,
             Bop::Sub_i32 => Type::I32,
             Bop::Mul_i32 => Type::I32,

@@ -446,12 +446,14 @@ impl<'a> BodyTranslator<'a> {
                     Bop::Shr_i32 => self.builder.ashr(a1, a2, &self.fresh_name()),
                     Bop::Shr_i64 => self.builder.ashr(a1, a2, &self.fresh_name()),
 
+                    Bop::Eq_ptr => self.builder.icmp(llvm::IntPredicate::EQ, a1, a2, &self.fresh_name()),
                     Bop::Eq_z => self.builder.icmp(llvm::IntPredicate::EQ, a1, a2, &self.fresh_name()),
                     Bop::Eq_i32 => self.builder.icmp(llvm::IntPredicate::EQ, a1, a2, &self.fresh_name()),
                     Bop::Eq_i64 => self.builder.icmp(llvm::IntPredicate::EQ, a1, a2, &self.fresh_name()),
                     Bop::Eq_f32 => self.builder.fcmp(llvm::RealPredicate::OrderedEQ, a1, a2, &self.fresh_name()),
                     Bop::Eq_f64 => self.builder.fcmp(llvm::RealPredicate::OrderedEQ, a1, a2, &self.fresh_name()),
 
+                    Bop::Ne_ptr => self.builder.icmp(llvm::IntPredicate::NE, a1, a2, &self.fresh_name()),
                     Bop::Ne_z => self.builder.icmp(llvm::IntPredicate::NE, a1, a2, &self.fresh_name()),
                     Bop::Ne_i32 => self.builder.icmp(llvm::IntPredicate::NE, a1, a2, &self.fresh_name()),
                     Bop::Ne_i64 => self.builder.icmp(llvm::IntPredicate::NE, a1, a2, &self.fresh_name()),
@@ -497,7 +499,8 @@ impl<'a> BodyTranslator<'a> {
                     Bop::Add_word => self.builder.add(a1, a2, &self.fresh_name()),
                     Bop::Mul_word => self.builder.mul(a1, a2, &self.fresh_name()),
 
-                    // And and or can be implemented with bitsize operations since there's only one bit.
+                    // And and or can be implemented with bitwise operations.
+                    // These don't short-circuit, but since the subexpressions have no structure, it should be okay.
                     Bop::And_z => self.builder.and(a1, a2, &self.fresh_name()),
                     Bop::Or_z => self.builder.or(a1, a2, &self.fresh_name()),
 
@@ -524,14 +527,14 @@ impl<'a> BodyTranslator<'a> {
                     Uop::Ctz_i32 => intrinsic!(self, "llvm.cttz.i32", e, (mir::Type::I32) -> mir::Type::I32),
                     Uop::Clz_i32 => intrinsic!(self, "llvm.ctlz.i32", e, (mir::Type::I32) -> mir::Type::I32),
                     Uop::Popcount_i32 => intrinsic!(self, "llvm.ctpop.i32", e, (mir::Type::I32) -> mir::Type::I32),
-                    Uop::Eqz_i32 => unimplemented!(),
-                    Uop::Complement_i32 => unimplemented!(),
+                    Uop::Eqz_i32 => self.builder.icmp(llvm::IntPredicate::EQ, e, llvm::Value::i32(0), &self.fresh_name()),
+                    Uop::Complement_i32 => self.builder.xor(e, llvm::Value::i32(-1), &self.fresh_name()),
 
                     Uop::Ctz_i64 => intrinsic!(self, "llvm.cttz.i64", e, (mir::Type::I64) -> mir::Type::I64),
                     Uop::Clz_i64 => intrinsic!(self, "llvm.ctlz.i64", e, (mir::Type::I64) -> mir::Type::I64),
                     Uop::Popcount_i64 => intrinsic!(self, "llvm.ctpop.i64", e, (mir::Type::I64) -> mir::Type::I64),
-                    Uop::Eqz_i64 => unimplemented!(),
-                    Uop::Complement_i64 => unimplemented!(),
+                    Uop::Eqz_i64 => self.builder.icmp(llvm::IntPredicate::EQ, e, llvm::Value::i64(0), &self.fresh_name()),
+                    Uop::Complement_i64 => self.builder.xor(e, llvm::Value::i64(-1), &self.fresh_name()),
 
                     Uop::Abs_f32 => intrinsic!(self, "llvm.fabs.f32", e, (mir::Type::F32) -> mir::Type::F32),
 

@@ -130,6 +130,10 @@ pub enum Bop {
     Eq_z,
     Ne_z,
 
+    // Pointer ops
+    Eq_ptr,
+    Ne_ptr,
+
     Add_i32,
     Sub_i32,
     Mul_i32,
@@ -142,7 +146,6 @@ pub enum Bop {
     Or_i32,
     Xor_i32,
 
-    // Compare ops always eval to an i32
     Eq_i32,
     Ne_i32,
     Lt_s_i32,
@@ -172,7 +175,6 @@ pub enum Bop {
     Or_i64,
     Xor_i64,
 
-    // Compare ops always eval to an i32
     Eq_i64,
     Ne_i64,
     Lt_s_i64,
