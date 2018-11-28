@@ -833,9 +833,13 @@ impl Builder {
         })
     }
 
+    pub fn select(&self, i: Value, t: Value, e: Value, name: &str) -> Value {
+        let cstr = CString::new(name).unwrap();
+        Value(unsafe {
+            llvm::core::LLVMBuildSelect(self.0, i.0, t.0, e.0, cstr.as_ptr())
+        })
+    }
 
-// LLVMValueRef 	LLVMBuildSelect (LLVMBuilderRef, LLVMValueRef If, LLVMValueRef Then, LLVMValueRef Else, const char *Name)
-//
 // LLVMValueRef 	LLVMBuildVAArg (LLVMBuilderRef, LLVMValueRef List, LLVMTypeRef Ty, const char *Name)
 //
 // LLVMValueRef 	LLVMBuildExtractElement (LLVMBuilderRef, LLVMValueRef VecVal, LLVMValueRef Index, const char *Name)
