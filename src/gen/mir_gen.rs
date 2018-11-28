@@ -310,6 +310,13 @@ impl ProcTranslator {
     }
 
     fn nonzero(&mut self, ty: mir::Type, e: mir::Exp) -> mir::Exp {
+        // If e is definitely not zero, just return e.
+        match e {
+            mir::Exp::Lit { lit: mir::Lit::I32 { value: n } } if n != 0 => { return e; },
+            mir::Exp::Lit { lit: mir::Lit::I64 { value: n } } if n != 0 => { return e; },
+            _ => {},
+        }
+
         let if_true = self.new_label();
         let if_false = self.new_label();
         let t = self.new_temp();
