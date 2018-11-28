@@ -1,10 +1,12 @@
 use crate::common::names::*;
 use crate::mir::trees as mir;
+use super::mir_gen;
 
 pub fn alloc() -> mir::Exp {
+    let void_ptr = mir::Type::Struct { fields: vec![] };
     mir::Exp::Global {
         name: Name::new("malloc"),
-        ty: mir::Type::Fun { ret: Box::new(mir::Type::EnvPtr), args: vec![mir::Type::I32] },
+        ty: mir::Type::Fun { ret: Box::new(void_ptr), args: vec![mir::Type::I32] },
     }
 }
 
@@ -25,9 +27,11 @@ pub fn boxer(ty: &mir::Type) -> mir::Exp {
         _ => unimplemented!()
     };
 
+    let void_ptr = mir::Type::Struct { fields: vec![] };
+
     mir::Exp::Global {
         name: Name::new(name),
-        ty: mir::Type::Fun { ret: Box::new(mir::Type::EnvPtr), args: vec![ty.clone()] },
+        ty: mir::Type::Fun { ret: Box::new(void_ptr), args: vec![ty.clone()] },
     }
 }
 
@@ -41,8 +45,10 @@ pub fn unboxer(ty: &mir::Type) -> mir::Exp {
         _ => unimplemented!()
     };
 
+    let void_ptr = mir::Type::Struct { fields: vec![] };
+
     mir::Exp::Global {
         name: Name::new(name),
-        ty: mir::Type::Fun { ret: Box::new(ty.clone()), args: vec![mir::Type::EnvPtr]},
+        ty: mir::Type::Fun { ret: Box::new(ty.clone()), args: vec![void_ptr]},
     }
 }

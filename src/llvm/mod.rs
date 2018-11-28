@@ -11,14 +11,6 @@ pub use self::wrappers::*;
 static INIT_FAILED: AtomicBool = AtomicBool::new(false);
 static INIT: Once = Once::new();
 
-macro_rules! u {
-    ($e: expr) => {
-        unsafe {
-            $e
-        }
-    }
-}
-
 macro_rules! c_str {
     ($s:expr) => (
         concat!($s, "\0").as_ptr() as *const i8
@@ -27,28 +19,25 @@ macro_rules! c_str {
 
 pub fn init() {
     INIT.call_once(|| {
-        if u!(llvm::core::LLVMStartMultithreaded()) != 1 {
-            INIT_FAILED.store(true, Ordering::SeqCst);
-        }
+        unsafe {
+            if llvm::core::LLVMStartMultithreaded() != 1 {
+                INIT_FAILED.store(true, Ordering::SeqCst);
+            }
 
-        init_target();
+            llvm::target::LLVMInitializeX86TargetInfo();
+            llvm::target::LLVMInitializeX86Target();
+            llvm::target::LLVMInitializeX86TargetMC();
+            llvm::target::LLVMInitializeX86AsmPrinter();
+            llvm::target::LLVMInitializeX86AsmParser();
+            
+            llvm::execution_engine::LLVMLinkInMCJIT();
+        }
 
         println!("LLVM initialized!");
     });
 
     if INIT_FAILED.load(Ordering::SeqCst) {
-        panic!("Couldn't enable multi-threaded x86 LLVM");
-    }
-}
-
-
-fn init_target() {
-    unsafe {
-        llvm::target::LLVMInitializeX86TargetInfo();
-        llvm::target::LLVMInitializeX86Target();
-        llvm::target::LLVMInitializeX86TargetMC();
-        llvm::target::LLVMInitializeX86AsmPrinter();
-        llvm::target::LLVMInitializeX86AsmParser();
+        panic!("Couldn't enable multi-threaded x86 LLVM with MCJIT");
     }
 }
 

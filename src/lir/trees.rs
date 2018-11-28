@@ -13,8 +13,6 @@ pub use crate::mir::trees::Lit;
 pub use crate::mir::trees::Param;
 pub use crate::mir::trees::Type;
 
-pub use crate::mir::trees::Typed;
-
 #[derive(Clone, Debug)]
 pub struct Root {
     pub data: Vec<Data>,
@@ -73,15 +71,4 @@ pub enum Exp {
     Global { ty: Type, name: Name },
     Temp { ty: Type, name: Name },
     Lit { lit: Lit },
-}
-
-impl Typed for Exp {
-    fn get_type(&self) -> Type {
-        match self {
-            Exp::Function { ty, name } => ty.clone(),
-            Exp::Global { ty, name } => ty.clone(),
-            Exp::Temp { ty, name } => ty.clone(),
-            Exp::Lit { lit } => lit.get_type(),
-        }
-    }
 }

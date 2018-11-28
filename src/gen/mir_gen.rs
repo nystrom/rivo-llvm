@@ -1,8 +1,8 @@
 use crate::hir::trees as hir;
 use crate::mir::trees as mir;
-use crate::mir::runtime_api as api;
 use crate::hir::ops::*;
 use crate::common::names::*;
+use super::runtime_api as api;
 
 pub struct Translate;
 
@@ -41,8 +41,7 @@ impl Translate {
                 ret: Box::new(Translate::translate_type(ret)),
                 args: args.iter().map(|ty| Translate::translate_type(ty)).collect()
             },
-            hir::Type::EnvPtr => mir::Type::EnvPtr,
-            hir::Type::Box => mir::Type::EnvPtr,
+            hir::Type::Box => mir::Type::Struct { fields: vec![] }, // TODO: void*
         }
     }
 }
@@ -765,21 +764,21 @@ impl ProcTranslator {
 
             // Boxing and unboxing
             hir::Exp::Box { ty, exp } => {
-                use crate::mir::trees::Typed;
+                use crate::mir::typed::Typed;
                 let mir_ty = Translate::translate_type(&ty);
                 let arg = self.translate_exp(&*exp);
                 mir::Exp::Call {
-                    fun_type: mir::Type::Fun { ret: Box::new(mir::Type::EnvPtr), args: vec![arg.get_type()] },
+                    fun_type: mir::Type::Fun { ret: Box::new(Translate::translate_type(&hir::Type::Box)), args: vec![mir_ty.clone()] },
                     fun: Box::new(api::boxer(&mir_ty)),
                     args: vec![arg]
                 }
             },
             hir::Exp::Unbox { ty, exp } => {
-                use crate::mir::trees::Typed;
+                use crate::mir::typed::Typed;
                 let mir_ty = Translate::translate_type(&ty);
                 let arg = self.translate_exp(&*exp);
                 mir::Exp::Call {
-                    fun_type: mir::Type::Fun { ret: Box::new(mir::Type::EnvPtr), args: vec![arg.get_type()] },
+                    fun_type: mir::Type::Fun { ret: Box::new(mir_ty.clone()), args: vec![Translate::translate_type(&hir::Type::Box)] },
                     fun: Box::new(api::unboxer(&mir_ty)),
                     args: vec![arg]
                 }

@@ -1,5 +1,6 @@
 use crate::mir::trees as mir;
-use crate::mir::trees::Typed;
+use crate::mir::typed::*;
+use crate::lir::typed::*;
 use crate::lir::trees as lir;
 use crate::hir::ops::*;
 use crate::common::names::*;

@@ -19,9 +19,6 @@ pub enum Type {
     // Boxed/tagged values.
     // To use a boxed value, one must explicitly unbox.
     Box,
-
-    // TODO: get rid of these.
-    EnvPtr,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

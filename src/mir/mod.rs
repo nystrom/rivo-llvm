@@ -4,9 +4,8 @@
 // MIR does no include boxing and unboxing operations. We assume a 64-bit architecture.
 
 pub mod trees;
+pub mod typed;
 
 pub mod ops {
     pub use crate::hir::ops::*;
 }
-
-pub mod runtime_api;

@@ -76,9 +76,17 @@ impl Translate {
         let builder = self.context.new_builder();
         let module = llvm::Module::new(name);
 
+        let mut funs = Vec::new();
+
         for p in &r.procs {
             let t = ProcTranslator::new(&self.context, &module, &builder);
-            t.translate_proc(p);
+            let fun = t.init_proc(p);
+            funs.push(fun);
+        }
+
+        for (p, fun) in r.procs.iter().zip(funs.iter()) {
+            let t = ProcTranslator::new(&self.context, &module, &builder);
+            t.translate_proc(p, *fun);
         }
 
         builder.dispose();
@@ -115,10 +123,6 @@ impl Translate {
                 let ps: Vec<llvm::Type> = args.iter().map(|a| Translate::to_type(context, a)).collect();
                 context.function_type(r, &ps, false)
             },
-
-            // TODO get rid of these
-            // void*
-            lir::Type::EnvPtr => context.pointer_type(Translate::to_type(context, &lir::Type::Void)),
         }
     }
 }
@@ -148,13 +152,14 @@ impl<'a> ProcTranslator<'a> {
         Translate::to_type(self.context, ty)
     }
 
-    fn translate_proc(&self, p: &lir::Proc) {
+    fn init_proc(&self, p: &lir::Proc) -> llvm::Value {
         let ty = self.to_type(&p.ret_type);
         let tys: Vec<llvm::Type> = p.params.iter().map(|p| self.to_type(&p.ty)).collect();
         let fun_ty = llvm::Type::function(ty, &tys, false);
+        self.module.add_function(&p.name.to_string(), fun_ty)
+    }
 
-        let fun = self.module.add_function(&p.name.to_string(), fun_ty);
-
+    fn translate_proc(&self, p: &lir::Proc, fun: llvm::Value) {
         let mut params = HashMap::new();
 
         for (i, p) in p.params.iter().enumerate() {

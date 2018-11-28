@@ -1,21 +1,11 @@
 mod mir_gen;
 mod lir_gen;
 mod llvm_gen;
+mod runtime_api;
 
 use crate::hir::trees as hir;
 use crate::lir::trees as lir;
 use crate::llvm;
-
-pub fn translate(name: &str, h: &hir::Root) {
-    let l = translate_lir(name, h);
-
-    // Note we can't return the module here because it will escape.
-    let t = llvm_gen::Translate::new();
-    let m = t.translate(name, &l);
-
-    m.dump();
-    m.dispose();
-}
 
 pub fn translate_in_context(name: &str, h: &hir::Root, context: llvm::Context) -> llvm::Module {
     let l = translate_lir(name, h);
@@ -61,7 +51,9 @@ mod tests {
             ]
         };
 
-        translate("test_fn_returns_0i64", &h);
+        let context = llvm::Context::new();
+        translate_in_context("test_fn_returns_0i64", &h, context);
+        context.dispose();
     }
 
     #[test]
@@ -129,7 +121,9 @@ mod tests {
             ]
         };
 
-        translate("test_fact_i64", &h);
+        let context = llvm::Context::new();
+        translate_in_context("test_fact_i64", &h, context);
+        context.dispose();
     }
 
     #[test]
@@ -149,6 +143,8 @@ mod tests {
             ]
         };
 
-        translate("test_identity_i64", &h);
+        let context = llvm::Context::new();
+        translate_in_context("test_identity_i64", &h, context);
+        context.dispose();
     }
 }
