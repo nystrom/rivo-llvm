@@ -495,14 +495,15 @@ impl ProcTranslator {
 
                 self.translate_exp(&init)
             }
-            hir::Exp::StructLit { ty, fields } => {
-                let struct_ty = Translate::translate_type(ty);
+            hir::Exp::StructLit { fields } => {
+                let field_types: Vec<mir::Type> = fields.iter().map(|f| Translate::translate_type(&f.param.ty)).collect();
+                let struct_ty = mir::Type::Struct { fields: field_types.clone() };
 
                 let alloc = mir::Exp::Call {
                     fun_type: mir::Type::Fun { ret: Box::new(struct_ty.clone()), args: vec![mir::Type::Word] },
                     fun: Box::new(api::alloc()),
                     args: vec![
-                        mir::Exp::Lit { lit: mir::Lit::Sizeof { ty: struct_ty.clone() }}
+                        mir::Exp::Lit { lit: mir::Lit::Sizeof { ty: struct_ty.clone() } },
                     ],
                 };
 
@@ -521,15 +522,12 @@ impl ProcTranslator {
 
                 let p = mir::Exp::Temp { name: t, ty: struct_ty.clone() };
 
-                for field in fields {
-                    let (i, hfield_ty) = ProcTranslator::get_field_index(ty, field.param.name);
-                    let field_ty = Translate::translate_type(&hfield_ty);
-
+                for (i, (field, field_ty)) in fields.iter().zip(field_types.iter()).enumerate() {
                     let v = self.translate_exp(&*field.exp);
 
                     ss.push(
                         mir::Stm::Store {
-                            ty: field_ty,
+                            ty: field_ty.clone(),
                             ptr: Box::new(
                                 mir::Exp::GetStructElementAddr {
                                     struct_ty: struct_ty.clone(),

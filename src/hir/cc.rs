@@ -38,7 +38,7 @@ mod hircc {
         LambdaCC { ret_type: Type, env_param: Param, params: Vec<Param>, body: Box<Exp> },
         ApplyCC { fun_type: Type, fun: Box<Exp>, args: Vec<Exp> },
 
-        StructLit { ty: Type, fields: Vec<Field> },
+        StructLit { fields: Vec<Field> },
         StructLoad { ty: Type, base: Box<Exp>, field: Name },
 
         Box { ty: Type, exp: Box<Exp> },
@@ -184,7 +184,7 @@ impl FV for Exp {
             Exp::Apply { fun_type, fun, args } => {
                 union!(fun.fv(), args.fv())
             }
-            Exp::StructLit { ty, fields } => {
+            Exp::StructLit { fields } => {
                 let mut s = HashTrieSet::new();
                 for field in fields {
                     s = union!(s, field.exp.fv())
@@ -278,8 +278,8 @@ impl Substitute for hircc::Exp {
                 hircc::Exp::ApplyCC { fun_type: fun_type.clone(), fun: fun.subst(s), args: args.subst(s) }
             },
 
-            hircc::Exp::StructLit { ty, fields } => {
-                hircc::Exp::StructLit { ty: ty.clone(), fields: fields.iter().map(|f| hircc::Field { param: f.param.clone(), exp: f.exp.subst(s) }).collect() }
+            hircc::Exp::StructLit { fields } => {
+                hircc::Exp::StructLit { fields: fields.iter().map(|f| hircc::Field { param: f.param.clone(), exp: f.exp.subst(s) }).collect() }
             },
             hircc::Exp::StructLoad { ty, base, field } => {
                 hircc::Exp::StructLoad { ty: ty.clone(), base: base.subst(s), field: *field }
@@ -432,7 +432,6 @@ impl CC<hircc::Exp> for Exp {
                 let env_field = Param { name: Name::new("env"), ty: external_env_type.clone() };
 
                 hircc::Exp::StructLit {
-                    ty: Type::Struct { fields: vec![fun_field.clone(), env_field.clone()] },
                     fields: vec![
                         hircc::Field {
                             param: fun_field,
@@ -451,9 +450,13 @@ impl CC<hircc::Exp> for Exp {
                         hircc::Field {
                             param: env_field,
                             exp: Box::new(
-                                hircc::Exp::StructLit {
+                                hircc::Exp::Cast {
                                     ty: external_env_type.clone(),
-                                    fields: env_fields
+                                    exp: Box::new(
+                                        hircc::Exp::StructLit {
+                                            fields: env_fields
+                                        }
+                                    )
                                 }
                             ),
                         }
@@ -464,9 +467,8 @@ impl CC<hircc::Exp> for Exp {
                 hircc::Exp::ApplyCC { fun_type: fun_type.clone(), fun: Box::new(fun.convert()), args: args.iter().map(|e| e.convert()).collect() }
             },
 
-            Exp::StructLit { ty, fields } => {
+            Exp::StructLit { fields } => {
                 hircc::Exp::StructLit {
-                    ty: ty.clone(),
                     fields: fields.iter().map(|f| hircc::Field { param: f.param.clone(), exp: Box::new(f.exp.convert()) }).collect()
                 }
             },
@@ -694,9 +696,8 @@ impl LL<Exp> for hircc::Exp {
                     )
                 }
             },
-            hircc::Exp::StructLit { ty, fields } => {
+            hircc::Exp::StructLit { fields } => {
                 Exp::StructLit {
-                    ty: ty.clone(),
                     fields: fields.iter().map(|f| Field { param: f.param.clone(), exp: Box::new(f.exp.lift(decls)) }).collect()
                  }
             },

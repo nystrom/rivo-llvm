@@ -71,7 +71,7 @@ pub enum Exp {
 
     // Structs
     // These are tagged in Ivo, but we make the tag an explicit field in HIR.
-    StructLit { ty: Type, fields: Vec<Field> },
+    StructLit { fields: Vec<Field> },
     StructLoad { ty: Type, base: Box<Exp>, field: Name },
 
     // Convert to and from boxed values.
