@@ -159,33 +159,35 @@ impl ProcTranslator {
                 let i = self.new_temp();
 
                 let assign = hir::Exp::Let {
-                    param: hir::Param {
-                        ty: hir::Type::Array { ty: Box::new(ty.clone()) },
-                        name: a,
-                    },
-                    init: array.clone(),
-                    body: Box::new(
-                        hir::Exp::Let {
+                    inits: vec![
+                        hir::Field {
                             param: hir::Param {
                                 ty: hir::Type::Array { ty: Box::new(ty.clone()) },
+                                name: a,
+                            },
+                            exp: array.clone(),
+                        },
+                        hir::Field {
+                            param: hir::Param {
+                                ty: hir::Type::I32,
                                 name: i,
                             },
-                            init: index.clone(),
+                            exp: index.clone(),
+                        }
+                    ],
+                    body: Box::new(
+                        hir::Exp::Seq {
                             body: Box::new(
-                                hir::Exp::Seq {
-                                    body: Box::new(
-                                        hir::Stm::ArrayAssign {
-                                            bounds_check: true,
-                                            ty: ty.clone(),
-                                            array: Box::new(hir::Exp::Var { ty: hir::Type::Array { ty: Box::new(ty.clone()) }, name: a }),
-                                            index: Box::new(hir::Exp::Var { ty: hir::Type::I32, name: i }),
-                                            value: value.clone()
-                                        }
-                                    ),
-                                    // Just eval to false. We'll discard this value.
-                                    exp: Box::new(hir::Exp::Lit { lit: hir::Lit::Bool { value: false } })
+                                hir::Stm::ArrayAssign {
+                                    bounds_check: true,
+                                    ty: ty.clone(),
+                                    array: Box::new(hir::Exp::Var { ty: hir::Type::Array { ty: Box::new(ty.clone()) }, name: a }),
+                                    index: Box::new(hir::Exp::Var { ty: hir::Type::I32, name: i }),
+                                    value: value.clone()
                                 }
-                            )
+                            ),
+                            // Just eval to false. We'll discard this value.
+                            exp: Box::new(hir::Exp::Lit { lit: hir::Lit::Bool { value: false } })
                         }
                     )
                 };
@@ -480,11 +482,15 @@ impl ProcTranslator {
                 }
 
                 let init = hir::Exp::Let {
-                    param: hir::Param {
-                        ty: array_type.clone(),
-                        name: t,
-                    },
-                    init: Box::new(new_array),
+                    inits: vec![
+                        hir::Field {
+                            param: hir::Param {
+                                ty: array_type.clone(),
+                                name: t,
+                            },
+                            exp: Box::new(new_array),
+                        }
+                    ],
                     body: Box::new(
                         hir::Exp::Seq {
                             body: Box::new(hir::Stm::Block { body: inits }),
@@ -801,16 +807,18 @@ impl ProcTranslator {
                     exp: Box::new(mir_exp),
                 }
             },
-            hir::Exp::Let { param, init, body } => {
-                let mir_init = self.translate_exp(&*init);
+            hir::Exp::Let { inits, body } => {
+                let mir_inits = inits.iter().map(|init| {
+                    let e = self.translate_exp(&*init.exp);
+                    mir::Stm::Move {
+                        ty: Translate::translate_type(&init.param.ty),
+                        lhs: init.param.name,
+                        rhs: Box::new(e)
+                    }
+                }).collect();
                 let mir_body = self.translate_exp(&*body);
-                let mir_assign = mir::Stm::Move {
-                    ty: Translate::translate_type(&param.ty),
-                    lhs: param.name,
-                    rhs: Box::new(mir_init)
-                };
                 mir::Exp::Block {
-                    body: vec![mir_assign],
+                    body: mir_inits,
                     exp: Box::new(mir_body),
                 }
             }

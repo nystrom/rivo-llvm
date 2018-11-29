@@ -34,7 +34,7 @@ mod hircc {
 
         Seq { body: Box<Stm>, exp: Box<Exp> },
 
-        Let { param: Param, init: Box<Exp>, body: Box<Exp> },
+        Let { inits: Vec<Field>, body: Box<Exp> },
         LambdaCC { ret_type: Type, env_param: Param, params: Vec<Param>, body: Box<Exp> },
         ApplyCC { fun_type: Type, fun: Box<Exp>, args: Vec<Exp> },
 
@@ -165,8 +165,21 @@ impl FV for Exp {
             Exp::Seq { body, exp } => {
                 union!(body.fv(), exp.fv())
             },
-            Exp::Let { param, init, body } => {
-                union!(init.fv(), body.fv().remove(&param.name))
+            Exp::Let { inits, body } => {
+                let mut p = HashTrieSet::new();
+                for init in inits {
+                    p = p.insert(init.param.name);
+                }
+                let mut s = HashTrieSet::new();
+                for x in body.fv().iter() {
+                    if ! p.contains(&x) {
+                        s = s.insert(*x);
+                    }
+                }
+                for init in inits {
+                    s = union!(s, init.exp.fv());
+                }
+                s
             },
             Exp::Lambda { ret_type, params, body } => {
                 let mut p = HashTrieSet::new();
@@ -211,6 +224,15 @@ impl<A: Substitute + Clone> Substitute for Box<A> {
 impl<A: Substitute> Substitute for Vec<A> {
     fn subst(&self, s: &Subst) -> Vec<A> {
         self.iter().map(|e| e.subst(s)).collect()
+    }
+}
+
+impl Substitute for hircc::Field {
+    fn subst(&self, s: &Subst) -> hircc::Field {
+        hircc::Field {
+            param: self.param.clone(),
+            exp: self.exp.subst(s)
+        }
     }
 }
 
@@ -261,10 +283,13 @@ impl Substitute for hircc::Exp {
                 hircc::Exp::Seq { body: body.subst(s), exp: exp.subst(s) }
             },
 
-            hircc::Exp::Let { param, init, body } => {
+            hircc::Exp::Let { inits, body } => {
                 let mut s2: Subst = s.clone();
-                s2.remove(&param.name);
-                hircc::Exp::Let { param: param.clone(), init: init.subst(s), body: body.subst(&s2) }
+                for f in inits {
+                    let name = f.param.name;
+                    s2.remove(&name);
+                }
+                hircc::Exp::Let { inits: inits.subst(s), body: body.subst(&s2) }
             },
             hircc::Exp::LambdaCC { ret_type, env_param, params, body } => {
                 let mut s2: Subst = s.clone();
@@ -279,7 +304,7 @@ impl Substitute for hircc::Exp {
             },
 
             hircc::Exp::StructLit { fields } => {
-                hircc::Exp::StructLit { fields: fields.iter().map(|f| hircc::Field { param: f.param.clone(), exp: f.exp.subst(s) }).collect() }
+                hircc::Exp::StructLit { fields: fields.subst(s) }
             },
             hircc::Exp::StructLoad { ty, base, field } => {
                 hircc::Exp::StructLoad { ty: ty.clone(), base: base.subst(s), field: *field }
@@ -324,6 +349,15 @@ impl Substitute for hircc::Stm {
 
 pub trait CC<T> {
     fn convert(&self) -> T;
+}
+
+impl CC<hircc::Field> for Field {
+    fn convert(&self) -> hircc::Field {
+        hircc::Field {
+            param: self.param.clone(),
+            exp: Box::new(self.exp.convert())
+        }
+    }
 }
 
 impl CC<hircc::Exp> for Exp {
@@ -371,8 +405,8 @@ impl CC<hircc::Exp> for Exp {
                 hircc::Exp::Seq { body: Box::new(body.convert()), exp: Box::new(exp.convert()) }
             },
 
-            Exp::Let { param, init, body } => {
-                hircc::Exp::Let { param: param.clone(), init: Box::new(init.convert()), body: Box::new(body.convert()) }
+            Exp::Let { inits, body } => {
+                hircc::Exp::Let { inits: inits.iter().map(|f| f.convert()).collect(), body: Box::new(body.convert()) }
             },
             Exp::Lambda { ret_type, params, body } => {
                 // The only interesting case is lambda.
@@ -595,8 +629,8 @@ impl LL<Exp> for hircc::Exp {
             hircc::Exp::Seq { body, exp } => {
                 Exp::Seq { body: Box::new(body.lift(decls)), exp: Box::new(exp.lift(decls)) }
             },
-            hircc::Exp::Let { param, init, body } => {
-                Exp::Let { param: param.clone(), init: Box::new(init.lift(decls)), body: Box::new(body.lift(decls)) }
+            hircc::Exp::Let {inits, body } => {
+                Exp::Let { inits: inits.iter().map(|f| Field { param: f.param.clone(), exp: Box::new(f.exp.lift(decls)) }).collect(), body: Box::new(body.lift(decls)) }
             },
             hircc::Exp::LambdaCC { ret_type, env_param, params, body } => {
                 let f = Name::fresh("lifted");
@@ -629,8 +663,12 @@ impl LL<Exp> for hircc::Exp {
                 let env_ptr = Exp::Var { ty: external_env_type.clone(), name: env_param_name };
                 let cast = Exp::Cast { ty: env_param.ty.clone(), exp: Box::new(env_ptr) };
                 let exp = Exp::Let {
-                    param: env_param.clone(),
-                    init: Box::new(cast),
+                    inits: vec![
+                        Field {
+                            param: env_param.clone(),
+                            exp: Box::new(cast)
+                        }
+                    ],
                     body: Box::new(lifted_body),
                 };
 
@@ -679,8 +717,12 @@ impl LL<Exp> for hircc::Exp {
                 };
 
                 Exp::Let {
-                    param: Param { name: closure, ty: closure_type.clone() },
-                    init: Box::new(fun.lift(decls)),
+                    inits: vec![
+                        Field {
+                            param: Param { name: closure, ty: closure_type.clone() },
+                            exp: Box::new(fun.lift(decls)),
+                        }
+                    ],
                     body: Box::new(
                         Exp::Apply {
                             fun_type: cc_fun_type,

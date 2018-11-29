@@ -65,7 +65,7 @@ pub enum Exp {
     Seq { body: Box<Stm>, exp: Box<Exp> },
 
     // Before lambda lifting.
-    Let { param: Param, init: Box<Exp>, body: Box<Exp> },
+    Let { inits: Vec<Field>, body: Box<Exp> },
     Lambda { ret_type: Type, params: Vec<Param>, body: Box<Exp> },
     Apply { fun_type: Type, fun: Box<Exp>, args: Vec<Exp> },
 
