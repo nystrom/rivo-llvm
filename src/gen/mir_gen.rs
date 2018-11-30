@@ -10,7 +10,7 @@ impl Translate {
     pub fn translate(r: &hir::Root) -> mir::Root {
         // Lambda lift
         use crate::hir::cc::*;
-        let cc = Lift::lift(&r);
+        let cc = LambdaLift::lambda_lift(&r);
 
         let procs = cc.defs.iter().flat_map(|p| match p {
             hir::Def::FunDef { ret_type, name, params, body } =>

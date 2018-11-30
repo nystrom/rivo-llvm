@@ -36,19 +36,19 @@ pub enum Lit {
     Bool { value: bool },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Root {
     pub defs: Vec<Def>
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Def {
     VarDef { ty: Type, name: Name, exp: Box<Exp> },
     FunDef { ret_type: Type, name: Name, params: Vec<Param>, body: Box<Exp> },
-    ExternDef { ret_type: Type, name: Name, params: Vec<Param> },
+    ExternDef { ty: Type, name: Name },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Exp {
     NewArray { ty: Type, length: Box<Exp> },
     ArrayLit { ty: Type, exps: Vec<Exp> },
@@ -83,7 +83,7 @@ pub enum Exp {
     Cast { ty: Type, exp: Box<Exp> },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Stm {
     IfElse { cond: Box<Exp>, if_true: Box<Stm>, if_false: Box<Stm> },
     IfThen { cond: Box<Exp>, if_true: Box<Stm> },
@@ -96,7 +96,7 @@ pub enum Stm {
     StructAssign { ty: Type, base: Box<Exp>, field: Name, value: Box<Exp> },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Field {
     pub param: Param,
     pub exp: Box<Exp>,

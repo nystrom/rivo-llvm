@@ -1,6 +1,6 @@
 #![allow(non_camel_case_types)]
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Uop {
     // Boolean ops
     Not_z,
@@ -118,7 +118,7 @@ pub enum Uop {
     Promote_f32_f64,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Bop {
     // These are either equivalent to Add/Mul_i32 or Add/Mul_i64, but left abstract here.
     Add_word,

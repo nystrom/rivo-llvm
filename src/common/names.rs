@@ -54,3 +54,25 @@ impl fmt::Display for Name {
         write!(f, "{}", self.0.to_string())
     }
 }
+
+
+
+pub struct FreshNameGenerator {
+    prefix: String,
+    next: usize,
+}
+
+impl FreshNameGenerator {
+    pub fn new(prefix: &str) -> FreshNameGenerator {
+        FreshNameGenerator {
+            prefix: String::from(prefix),
+            next: 0
+        }
+    }
+
+    pub fn fresh(&mut self, prefix: &str) -> Name {
+        let x = Name::new(&format!("{}.{}.{}", prefix, self.prefix, self.next));
+        self.next += 1;
+        x
+    }
+}
