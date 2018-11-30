@@ -129,6 +129,8 @@ pub fn run_main(name: &str, h: &hir::Root) -> Result<i32, String> {
     unsafe { crate::llvm_sys::transforms::scalar::LLVMAddGVNPass(pm); }
     unsafe { crate::llvm_sys::transforms::scalar::LLVMAddTailCallEliminationPass(pm); }
     unsafe { crate::llvm_sys::transforms::scalar::LLVMAddInstructionCombiningPass(pm); }
+
+    // This breaks the control flow.
     // unsafe { crate::llvm_sys::transforms::scalar::LLVMAddCFGSimplificationPass(pm); }
 
     unsafe { core::LLVMRunPassManager(pm, module.0); }
@@ -154,11 +156,12 @@ pub fn run_main(name: &str, h: &hir::Root) -> Result<i32, String> {
     let f: extern "C" fn() -> i32 = unsafe { mem::transmute(addr) };
     let res = f();
 
+    // We're done. Dispose of the EE and the context.
+    // Don't dispose of the module. The EE owns it!
     unsafe {
         execution_engine::LLVMDisposeExecutionEngine(ee);
     }
 
-    // Don't dispose of the module. The EE owns it now!
 
     context.dispose();
 
