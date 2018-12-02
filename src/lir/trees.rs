@@ -11,18 +11,14 @@ use crate::common::names::*;
 // These are the same as mir trees, so just use them.
 pub use crate::mir::trees::Lit;
 pub use crate::mir::trees::Param;
+pub use crate::mir::trees::Data;
 pub use crate::mir::trees::Type;
 
 #[derive(Clone, Debug)]
 pub struct Root {
+    pub externs: Vec<Param>,
     pub data: Vec<Data>,
     pub procs: Vec<Proc>
-}
-
-#[derive(Clone, Debug)]
-pub struct Data {
-    pub ty: Type,
-    pub name: Name,
 }
 
 #[derive(Clone, Debug)]
@@ -67,8 +63,8 @@ pub enum Stm {
 
 #[derive(Clone, Debug)]
 pub enum Exp {
-    Function { ty: Type, name: Name },
-    Global { ty: Type, name: Name },
+    FunctionAddr { ty: Type, name: Name },
+    GlobalAddr { ty: Type, name: Name },
     Temp { ty: Type, name: Name },
     Lit { lit: Lit },
 }

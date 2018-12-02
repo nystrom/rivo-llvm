@@ -59,6 +59,10 @@ pub enum Exp {
     Call { fun_type: Type, name: Name, args: Vec<Exp> },
     Var { name: Name, ty: Type },
 
+    // Global variables and functions
+    Global { name: Name, ty: Type },
+    Function { name: Name, ty: Type },
+
     Binary { op: Bop, e1: Box<Exp>, e2: Box<Exp> },
     Unary { op: Uop, exp: Box<Exp> },
 

@@ -1,5 +1,6 @@
 use crate::hir::trees as hir;
 use crate::mir::trees as mir;
+use crate::mir::typed::*;
 use crate::hir::ops::*;
 use crate::common::names::*;
 use super::runtime_api as api;
@@ -12,13 +13,115 @@ impl Translate {
         use crate::hir::cc::*;
         let cc = LambdaLift::lambda_lift(&r);
 
-        let procs = cc.defs.iter().flat_map(|p| match p {
-            hir::Def::FunDef { ret_type, name, params, body } =>
-                Some(ProcTranslator::new(Translate::translate_type(ret_type)).translate(ret_type, *name, params, &**body)),
-            _ => None,
-        }).collect();
+        println!("LIFTED {:#?}", cc);
 
-        mir::Root { data: vec![], procs }
+        // TODO: generate an initializer function for the module.
+        // The initializer runs when the module is loaded.
+        // The initializer initializes any data in the module.
+        // The initializer creates the memoization tables for the module.
+        let mut pt = ProcTranslator::new();
+
+        let mut externs = Vec::new();
+        let mut datas = Vec::new();
+        let mut procs = Vec::new();
+        let mut inits = Vec::new();
+
+        for p in &cc.defs {
+            match p {
+                hir::Def::VarDef { ty, name, exp } => {
+                    let (data, opt_init) = pt.translate_data(ty, *name, &**exp);
+
+                    if let Some(init) = opt_init {
+                        inits.push(init);
+                    }
+
+                    datas.push(data);
+                },
+                hir::Def::FunDef { ret_type, name, params, body } => {
+                    let proc = pt.translate_proc(ret_type, *name, params, &**body);
+                    procs.push(proc);
+                },
+                hir::Def::ExternDef { ty, name } => {
+                    externs.push(mir::Param { name: *name, ty: Translate::translate_type(&ty) })
+                },
+            }
+        }
+
+        if true || ! inits.is_empty() {
+            procs.push(
+                mir::Proc {
+                    ret_type: mir::Type::Void,
+                    name: Name::new("init_module"),
+                    params: vec![],
+                    body: Box::new(
+                        mir::Exp::Block {
+                            body: inits,
+                            exp: Box::new(mir::Exp::Lit { lit: mir::Lit::Void })
+                        }
+                    )
+                }
+            );
+        }
+
+        // let malloc = api::alloc();
+        // let panic = api::panic();
+        // let box_i32 = api::boxer(mir::Type::I32);
+        // let box_i64 = api::boxer(mir::Type::I64);
+        // let box_f32 = api::boxer(mir::Type::F32);
+        // let box_f64 = api::boxer(mir::Type::F64);
+        // let unbox_i32 = api::unboxer(mir::Type::I32);
+        // let unbox_i64 = api::unboxer(mir::Type::I64);
+        // let unbox_f32 = api::unboxer(mir::Type::F32);
+        // let unbox_f64 = api::unboxer(mir::Type::F64);
+        //
+        // externs.extend(
+        //     [mir::Param { name: malloc.name, ty: malloc.ty }].iter()
+        // );
+
+        mir::Root { externs, data: datas, procs }
+    }
+
+    fn default_for_type(ty: &mir::Type) -> mir::Lit {
+        match ty {
+            mir::Type::I1 => mir::Lit::I1 { value: false },
+            mir::Type::I8 => mir::Lit::I8 { value: 0 },
+            mir::Type::I16 => mir::Lit::I16 { value: 0 },
+            mir::Type::I32 => mir::Lit::I32 { value: 0 },
+            mir::Type::I64 => mir::Lit::I64 { value: 0 },
+            mir::Type::Word => mir::Lit::ArrayBaseOffset,  // FIXME HACK: remove word type from MIR.
+            mir::Type::F32 => mir::Lit::F32 { value: 0.0 },
+            mir::Type::F64 => mir::Lit::F64 { value: 0.0 },
+            mir::Type::Void => mir::Lit::Void,
+            mir::Type::Ptr { .. } => mir::Lit::Null { ty: ty.clone() },
+            _ => panic!("no default value for type {:?}", ty),
+        }
+    }
+
+    // Translates a function type only, but without wrapping in a ptr type.
+    // Needed for implementing calls.
+    pub fn translate_fun_type(ty: &hir::Type) -> mir::Type {
+        match ty {
+            hir::Type::Fun { ret, args } => {
+                mir::Type::Fun {
+                    ret: Box::new(Translate::translate_type(ret)),
+                    args: args.iter().map(|ty| Translate::translate_type(ty)).collect()
+                }
+            },
+            _ => panic!("expected function type, got {:?}", ty),
+        }
+    }
+
+    // Translates a function type only, but without wrapping in a ptr type.
+    // Needed for implementing calls.
+    pub fn translate_struct_type(ty: &hir::Type) -> mir::Type {
+        match ty {
+            hir::Type::Struct { fields } => {
+                mir::Type::Struct {
+                    fields: fields.iter().map(|f| Translate::translate_type(&f.ty)).collect()
+                }
+            },
+            _ => panic!("expected struct type, got {:?}", ty),
+        }
     }
 
     pub fn translate_type(ty: &hir::Type) -> mir::Type {
@@ -29,30 +132,44 @@ impl Translate {
             hir::Type::F64 => mir::Type::F64,
             hir::Type::Bool => mir::Type::I1,
             hir::Type::Void => mir::Type::Void,
-            hir::Type::Array { ty } => mir::Type::Array {
-                ty: Box::new(Translate::translate_type(ty))
+            hir::Type::Array { ty } => {
+                mir::Type::Ptr {
+                    ty: Box::new(
+                        mir::Type::Array {
+                            ty: Box::new(Translate::translate_type(ty))
+                        }
+                    )
+                }
             },
-            hir::Type::Struct { fields } => mir::Type::Struct {
-                fields: fields.iter().map(|f| Translate::translate_type(&f.ty)).collect()
+            hir::Type::Struct { fields } => {
+                mir::Type::Ptr {
+                    ty: Box::new(Translate::translate_struct_type(ty))
+                }
             },
 
-            // TODO
-            hir::Type::Fun { ret, args } => mir::Type::Fun {
-                ret: Box::new(Translate::translate_type(ret)),
-                args: args.iter().map(|ty| Translate::translate_type(ty)).collect()
+            hir::Type::Fun { ret, args } => {
+                mir::Type::Ptr {
+                    ty: Box::new(Translate::translate_fun_type(ty))
+                }
             },
-            hir::Type::Box => mir::Type::Struct { fields: vec![] }, // TODO: void*
+
+            hir::Type::Box => {
+                // TODO
+                mir::Type::Ptr {
+                    ty: Box::new(
+                        mir::Type::Struct { fields: vec![] }
+                    )
+                }
+            },
         }
     }
 }
 
-struct ProcTranslator {
-}
+struct ProcTranslator;
 
 impl ProcTranslator {
-    fn new(ty: mir::Type) -> Self {
-        ProcTranslator {
-        }
+    fn new() -> Self {
+        ProcTranslator {}
     }
 
     fn new_temp(&mut self) -> Name {
@@ -63,9 +180,56 @@ impl ProcTranslator {
         Name::fresh("L.mir")
     }
 
-    fn translate(&mut self, ty: &hir::Type, name: Name, params: &Vec<hir::Param>, body: &hir::Exp) -> mir::Proc {
+    fn translate_data(&mut self, ty: &hir::Type, name: Name, body: &hir::Exp) -> (mir::Data, Option<mir::Stm>) {
         let mir_body = self.translate_exp(body);
         let mir_ty = Translate::translate_type(ty);
+
+        // If the initializer expression is a literal, leave as is.
+        // Otherwise, initialize to the default value (null, 0, etc)
+        // and return an initializer statement to add to init_module procedure.
+        match mir_body {
+            mir::Exp::Lit { lit } => {
+                (
+                    mir::Data {
+                        ty: mir_ty,
+                        name,
+                        init: lit
+                    },
+                    None
+                )
+            },
+            _ => {
+                let init = mir::Stm::Store {
+                    ty: mir_ty.clone(),
+                    ptr: Box::new(mir::Exp::GlobalAddr { name, ty: mir::Type::Ptr { ty: Box::new(mir_ty.clone()) } }),
+                    value: Box::new(mir_body),
+                };
+
+                let default = Translate::default_for_type(&mir_ty);
+
+                (
+                    mir::Data {
+                        ty: mir_ty,
+                        name: name,
+                        init: default,
+                    },
+                    Some(init)
+                )
+            }
+        }
+
+    }
+
+    fn translate_proc(&mut self, ty: &hir::Type, name: Name, params: &Vec<hir::Param>, body: &hir::Exp) -> mir::Proc {
+        let mir_body = self.translate_exp(body);
+        let mir_ty = Translate::translate_type(ty);
+
+        let body_ty = mir_body.get_type();
+        println!("mir_body = {:#?}", mir_body);
+        println!("body_ty = {:#?}", body_ty);
+        println!("mir_ty = {:#?}", mir_ty);
+
+        assert_eq!(mir_ty, body_ty);
 
         let mir_params = params.iter().map(|param|
             mir::Param { name: param.name, ty: Translate::translate_type(&param.ty) }
@@ -103,11 +267,12 @@ impl ProcTranslator {
             hir::Stm::Eval { exp } => {
                 // Just assign into a fresh temp and rely on regalloc to eliminate.
                 let t = self.new_temp();
+                let v = self.translate_exp(&*exp);
                 vec![
                     mir::Stm::Move {
-                        ty: mir::Type::Void,
+                        ty: v.get_type(),
                         lhs: t,
-                        rhs: Box::new(self.translate_exp(&*exp))
+                        rhs: Box::new(v)
                     }
                 ]
             },
@@ -215,7 +380,8 @@ impl ProcTranslator {
                 ]
             },
             hir::Stm::StructAssign { ty, base, field, value } => {
-                let struct_ty = Translate::translate_type(ty);
+                let struct_ptr_ty = Translate::translate_type(ty);
+                let struct_ty = Translate::translate_struct_type(ty);
 
                 let (i, hfield_ty) = ProcTranslator::get_field_index(ty, *field);
                 let field_ty = Translate::translate_type(&hfield_ty);
@@ -406,7 +572,17 @@ impl ProcTranslator {
         }
     }
 
+
     fn translate_exp(&mut self, e: &hir::Exp) -> mir::Exp {
+        println!("HIR(1) {:#?}", e);
+        let m = self.translate_exp_without_check(e);
+        println!("HIR(2) {:#?}", e);
+        println!("MIR {:#?}", m);
+        m.get_type(); // type check
+        m
+    }
+
+    fn translate_exp_without_check(&mut self, e: &hir::Exp) -> mir::Exp {
         let simplified_exp = ProcTranslator::simplify(e);
 
         match simplified_exp {
@@ -418,44 +594,59 @@ impl ProcTranslator {
 
                 let base_ty = Translate::translate_type(ty);
 
-                let array_type = mir::Type::Array {
-                    ty: Box::new(base_ty.clone())
+                let array_ptr_type = mir::Type::Ptr {
+                    ty: Box::new(
+                        mir::Type::Array {
+                            ty: Box::new(base_ty.clone())
+                        }
+                    )
+                };
+
+                let byte_ptr_type = mir::Type::Ptr {
+                    ty: Box::new(
+                        mir::Type::I8
+                    )
                 };
 
                 // To allocate, we compute the size of the array, then call malloc.
-                let alloc = mir::Exp::Call {
-                    fun_type: mir::Type::Fun { ret: Box::new(array_type.clone()), args: vec![mir::Type::Word] },
-                    fun: Box::new(api::alloc()),
-                    args: vec![
-                        mir::Exp::Binary {
-                            op: Bop::Add_word,
-                            e1: Box::new(mir::Exp::Lit { lit: mir::Lit::ArrayBaseOffset }),
-                            e2: Box::new(
+                let alloc = mir::Exp::Cast {
+                    ty: array_ptr_type.clone(),
+                    exp: Box::new(
+                        mir::Exp::Call {
+                            fun_type: mir::Type::Fun { ret: Box::new(byte_ptr_type), args: vec![mir::Type::Word] },
+                            fun: Box::new(api::alloc()),
+                            args: vec![
                                 mir::Exp::Binary {
-                                    op: Bop::Mul_word,
-                                    e1: Box::new(mir::Exp::Lit { lit: mir::Lit::Sizeof { ty: base_ty.clone() }}),
-                                    e2: Box::new(mir::Exp::Temp { name: len, ty: mir::Type::Word }),
+                                    op: Bop::Add_word,
+                                    e1: Box::new(mir::Exp::Lit { lit: mir::Lit::ArrayBaseOffset }),
+                                    e2: Box::new(
+                                        mir::Exp::Binary {
+                                            op: Bop::Mul_word,
+                                            e1: Box::new(mir::Exp::Lit { lit: mir::Lit::Sizeof { ty: base_ty.clone() }}),
+                                            e2: Box::new(mir::Exp::Temp { name: len, ty: mir::Type::Word }),
+                                        }
+                                    ),
                                 }
-                            ),
+                            ]
                         }
-                    ]
+                    )
                 };
 
                 mir::Exp::Block {
                     body: vec![
                         mir::Stm::Move { ty: mir::Type::Word, lhs: len, rhs: Box::new(n) },
-                        mir::Stm::Move { ty: mir::Type::Ptr { ty: Box::new(array_type.clone()) }, lhs: array, rhs: Box::new(alloc) },
+                        mir::Stm::Move { ty: array_ptr_type.clone(), lhs: array, rhs: Box::new(alloc) },
                         mir::Stm::Store {
                             ty: mir::Type::Word,
                             ptr: Box::new(
                                 mir::Exp::GetArrayLengthAddr {
-                                    ptr: Box::new(mir::Exp::Temp { name: array, ty: array_type.clone() })
+                                    ptr: Box::new(mir::Exp::Temp { name: array, ty: array_ptr_type.clone() })
                                 }
                             ),
                             value: Box::new(mir::Exp::Temp { name: len, ty: mir::Type::Word }),
                         }
                     ],
-                    exp: Box::new(mir::Exp::Temp { name: array, ty: array_type.clone() })
+                    exp: Box::new(mir::Exp::Temp { name: array, ty: array_ptr_type.clone() })
                 }
             },
 
@@ -504,29 +695,39 @@ impl ProcTranslator {
             hir::Exp::StructLit { fields } => {
                 let field_types: Vec<mir::Type> = fields.iter().map(|f| Translate::translate_type(&f.param.ty)).collect();
                 let struct_ty = mir::Type::Struct { fields: field_types.clone() };
+                let struct_ptr_ty = mir::Type::Ptr { ty: Box::new(mir::Type::Struct { fields: field_types.clone() }) };
+                let byte_ptr_type = mir::Type::Ptr { ty: Box::new(mir::Type::I8) };
 
-                let alloc = mir::Exp::Call {
-                    fun_type: mir::Type::Fun { ret: Box::new(struct_ty.clone()), args: vec![mir::Type::Word] },
-                    fun: Box::new(api::alloc()),
-                    args: vec![
-                        mir::Exp::Lit { lit: mir::Lit::Sizeof { ty: struct_ty.clone() } },
-                    ],
+                let alloc = mir::Exp::Cast {
+                    ty: struct_ptr_ty.clone(),
+                    exp: Box::new(
+                        mir::Exp::Call {
+                            fun_type: mir::Type::Fun { ret: Box::new(byte_ptr_type), args: vec![mir::Type::Word] },
+                            fun: Box::new(api::alloc()),
+                            args: vec![
+                                mir::Exp::Lit { lit: mir::Lit::Sizeof { ty: struct_ty.clone() } },
+                            ],
+                        }
+                    )
                 };
 
                 let t = self.new_temp();
 
                 let mut ss = Vec::new();
 
-                // t = malloc(sizeof(ty))
+                // t = (ty) malloc(sizeof(ty))
                 ss.push(
                     mir::Stm::Move {
-                        ty: struct_ty.clone(),
+                        ty: struct_ptr_ty.clone(),
                         lhs: t,
                         rhs: Box::new(alloc),
                     }
                 );
 
-                let p = mir::Exp::Temp { name: t, ty: struct_ty.clone() };
+                let p = mir::Exp::Temp {
+                    name: t,
+                    ty: struct_ptr_ty.clone(),
+                };
 
                 for (i, (field, field_ty)) in fields.iter().zip(field_types.iter()).enumerate() {
                     let v = self.translate_exp(&*field.exp);
@@ -556,22 +757,48 @@ impl ProcTranslator {
                 unimplemented!()
             },
             hir::Exp::Apply { fun_type, fun, args } => {
+                let fun_ty = Translate::translate_fun_type(fun_type);
+
                 mir::Exp::Call {
-                    fun_type: Translate::translate_type(fun_type),
+                    fun_type: fun_ty,
                     fun: Box::new(self.translate_exp(&*fun)),
                     args: args.iter().map(|e| self.translate_exp(e)).collect(),
                 }
             },
             hir::Exp::Call { fun_type, name, args } => {
-                let ty = Translate::translate_type(fun_type);
+                let fun_ty = Translate::translate_fun_type(fun_type);
+                let fun_ptr_ty = Translate::translate_type(fun_type);
+                let f = mir::Exp::FunctionAddr { name: *name, ty: fun_ptr_ty };
+
+                f.get_type();
+
                 mir::Exp::Call {
-                    fun_type: ty.clone(),
-                    fun: Box::new(mir::Exp::Function { name: *name, ty: ty.clone() }),
+                    fun_type: fun_ty,
+                    fun: Box::new(f),
                     args: args.iter().map(|e| self.translate_exp(e)).collect(),
                 }
             },
             hir::Exp::Var { name, ty } => {
                 mir::Exp::Temp { name: *name, ty: Translate::translate_type(ty) }
+            },
+            hir::Exp::Global { name, ty } => {
+                mir::Exp::Load {
+                    ty: Translate::translate_type(ty),
+                    ptr: Box::new(
+                        mir::Exp::GlobalAddr {
+                            name: *name,
+                            ty: mir::Type::Ptr {
+                                ty: Box::new(Translate::translate_type(ty))
+                            }
+                        }
+                    ),
+                }
+            },
+            hir::Exp::Function { name, ty } => {
+                let fun_ptr_ty = Translate::translate_type(ty);
+                let f = mir::Exp::FunctionAddr { name: *name, ty: fun_ptr_ty };
+                f.get_type();
+                f
             },
 
             hir::Exp::ArrayLoad { bounds_check: true, ty, array, index } => {
@@ -602,7 +829,8 @@ impl ProcTranslator {
                 }
             },
             hir::Exp::StructLoad { ty, base, field } => {
-                let struct_ty = Translate::translate_type(ty);
+                let struct_ptr_ty = Translate::translate_type(ty);
+                let struct_ty = Translate::translate_struct_type(ty);
 
                 let (i, hfield_ty) = ProcTranslator::get_field_index(ty, *field);
                 let field_ty = Translate::translate_type(&hfield_ty);

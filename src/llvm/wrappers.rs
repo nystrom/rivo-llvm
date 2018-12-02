@@ -74,9 +74,31 @@ macro_rules! c_bool {
 }
 
 impl Value {
+
+    pub fn set_initializer(&self, v: Value) {
+            unsafe {
+                llvm::core::LLVMSetInitializer(self.0, v.0);
+            }
+    }
+    
+    pub fn null(ty: Type) -> Value {
+        Value(
+            unsafe { llvm::core::LLVMConstNull(ty.0) }
+        )
+    }
     pub fn i1(v: bool) -> Value {
         Value(
             unsafe { llvm::core::LLVMConstInt(Type::i1().0, c_bool!(v), c_bool!(true)) }
+        )
+    }
+    pub fn i8(v: i8) -> Value {
+        Value(
+            unsafe { llvm::core::LLVMConstInt(Type::i8().0, v as c_ulonglong, c_bool!(true)) }
+        )
+    }
+    pub fn i16(v: i16) -> Value {
+        Value(
+            unsafe { llvm::core::LLVMConstInt(Type::i16().0, v as c_ulonglong, c_bool!(true)) }
         )
     }
     pub fn i32(v: i32) -> Value {
@@ -122,6 +144,14 @@ impl Type {
 
     pub fn i1() -> Type {
         Type(unsafe { llvm::core::LLVMInt1Type() })
+    }
+
+    pub fn i8() -> Type {
+        Type(unsafe { llvm::core::LLVMInt8Type() })
+    }
+
+    pub fn i16() -> Type {
+        Type(unsafe { llvm::core::LLVMInt16Type() })
     }
 
     pub fn i32() -> Type {
@@ -181,6 +211,11 @@ impl Module {
         Value(unsafe { llvm::core::LLVMAddFunction(self.0, cstr.as_ptr(), ty.0) })
     }
 
+    pub fn add_global(&self, name: &str, ty: Type) -> Value {
+        let cstr = CString::new(name).unwrap();
+        Value(unsafe { llvm::core::LLVMAddGlobal(self.0, ty.0, cstr.as_ptr()) })
+    }
+
     pub fn dump(&self) {
         unsafe {
             llvm::core::LLVMDumpModule(self.0)
@@ -197,14 +232,18 @@ impl Module {
     pub fn get_named_global(&self, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMGetNamedGlobal(self.0, cstr.as_ptr())
+            let p = llvm::core::LLVMGetNamedGlobal(self.0, cstr.as_ptr());
+            assert!(! p.is_null(), "no global named {}", name);
+            p
         })
     }
 
     pub fn get_named_function(&self, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMGetNamedFunction(self.0, cstr.as_ptr())
+            let p = llvm::core::LLVMGetNamedFunction(self.0, cstr.as_ptr());
+            assert!(! p.is_null(), "no function named {}", name);
+            p
         })
     }
 
@@ -235,22 +274,30 @@ impl Context {
         Type(unsafe { llvm::core::LLVMMetadataTypeInContext(self.0) })
     }
 
-    pub fn i1_type(&self, ) -> Type {
+    pub fn i1_type(&self) -> Type {
         Type(unsafe { llvm::core::LLVMInt1TypeInContext(self.0) })
     }
 
-    pub fn i32_type(&self, ) -> Type {
+    pub fn i8_type(&self) -> Type {
+        Type(unsafe { llvm::core::LLVMInt8TypeInContext(self.0) })
+    }
+
+    pub fn i16_type(&self) -> Type {
+        Type(unsafe { llvm::core::LLVMInt16TypeInContext(self.0) })
+    }
+
+    pub fn i32_type(&self) -> Type {
         Type(unsafe { llvm::core::LLVMInt32TypeInContext(self.0) })
     }
 
-    pub fn i64_type(&self, ) -> Type {
+    pub fn i64_type(&self) -> Type {
         Type(unsafe { llvm::core::LLVMInt64TypeInContext(self.0) })
     }
-    pub fn float_type(&self, ) -> Type {
+    pub fn float_type(&self) -> Type {
         Type(unsafe { llvm::core::LLVMFloatTypeInContext(self.0) })
     }
 
-    pub fn double_type(&self, ) -> Type {
+    pub fn double_type(&self) -> Type {
         Type(unsafe { llvm::core::LLVMDoubleTypeInContext(self.0) })
     }
 
@@ -355,38 +402,50 @@ impl Builder {
 
     pub fn ret_void(&self) -> Value {
         Value(unsafe {
-            llvm::core::LLVMBuildRetVoid(self.0)
+            let insn = llvm::core::LLVMBuildRetVoid(self.0);
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn ret(&self, v: Value) -> Value {
         Value(unsafe {
-            llvm::core::LLVMBuildRet(self.0, v.0)
+            let insn = llvm::core::LLVMBuildRet(self.0, v.0);
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn aggregate_ret(&self, vs: &[Value]) -> Value {
         let mut a: Vec<LLVMValueRef> = vs.iter().map(|v| v.0).collect();
         Value(unsafe {
-            llvm::core::LLVMBuildAggregateRet(self.0, a.as_mut_ptr(), vs.len() as u32)
+            let insn = llvm::core::LLVMBuildAggregateRet(self.0, a.as_mut_ptr(), vs.len() as u32);
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn br(&self, dest: BB) -> Value {
         Value(unsafe {
-            llvm::core::LLVMBuildBr(self.0, dest.0)
+            let insn = llvm::core::LLVMBuildBr(self.0, dest.0);
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn cond_br(&self, i: Value, t: BB, e: BB) -> Value {
         Value(unsafe {
-            llvm::core::LLVMBuildCondBr(self.0, i.0, t.0, e.0)
+            let insn = llvm::core::LLVMBuildCondBr(self.0, i.0, t.0, e.0);
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn switch(&self, i: Value, e: BB, ncases: usize) -> Value {
         Value(unsafe {
-            llvm::core::LLVMBuildSwitch(self.0, i.0, e.0, ncases as u32)
+            let insn = llvm::core::LLVMBuildSwitch(self.0, i.0, e.0, ncases as u32);
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
@@ -396,7 +455,9 @@ impl Builder {
 
     pub fn unreachable(&self) -> Value {
         Value(unsafe {
-            llvm::core::LLVMBuildUnreachable(self.0)
+            let insn = llvm::core::LLVMBuildUnreachable(self.0);
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
@@ -434,179 +495,231 @@ impl Builder {
     pub fn add(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildAdd(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildAdd(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn nsw_add(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildNSWAdd(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildNSWAdd(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn nuw_add(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildNUWAdd(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildNUWAdd(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn fadd(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildFAdd(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildFAdd(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn sub(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildSub(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildSub(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn nsw_sub(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildNSWSub(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildNSWSub(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn nuw_sub(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildNUWSub(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildNUWSub(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn fsub(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildFSub(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildFSub(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn mul(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildMul(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildMul(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn nsw_mul(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildNSWMul(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildNSWMul(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn nuw_mul(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildNUWMul(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildNUWMul(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn fmul(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildFMul(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildFMul(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn udiv(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildUDiv(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildUDiv(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn exact_udiv(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildExactUDiv(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildExactUDiv(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn sdiv(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildSDiv(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildSDiv(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn exact_sdiv(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildExactSDiv(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildExactSDiv(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn fdiv(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildFDiv(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildFDiv(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn urem(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildURem(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildURem(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
     pub fn srem(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildSRem(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildSRem(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn frem(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildFRem(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildFRem(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn shl(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildShl(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildShl(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
     pub fn lshr(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildLShr(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildLShr(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
     pub fn ashr(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildAShr(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildAShr(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn and(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildAnd(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildAnd(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn or(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildOr(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildOr(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn xor(&self, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildXor(self.0, left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildXor(self.0, left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 // LLVMValueRef 	LLVMBuildBinOp (LLVMBuilderRef B, LLVMOpcode Op, LLVMValueRef LHS, LLVMValueRef RHS, const char *Name)
@@ -614,32 +727,42 @@ impl Builder {
     pub fn neg(&self, v: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildNeg(self.0, v.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildNeg(self.0, v.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn nsw_neg(&self, v: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildNSWNeg(self.0, v.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildNSWNeg(self.0, v.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
     pub fn nuw_neg(&self, v: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildNUWNeg(self.0, v.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildNUWNeg(self.0, v.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
     pub fn fneg(&self, v: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildFNeg(self.0, v.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildFNeg(self.0, v.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
     pub fn not(&self, v: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildNot(self.0, v.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildNot(self.0, v.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
@@ -655,7 +778,9 @@ impl Builder {
     pub fn alloca(&self, ty: Type, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildAlloca(self.0, ty.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildAlloca(self.0, ty.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
@@ -668,13 +793,17 @@ impl Builder {
     pub fn load(&self, ptr: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildLoad(self.0, ptr.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildLoad(self.0, ptr.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn store(&self, v: Value, ptr: Value) -> Value {
         Value(unsafe {
-            llvm::core::LLVMBuildStore(self.0, v.0, ptr.0)
+            let insn = llvm::core::LLVMBuildStore(self.0, v.0, ptr.0);
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
@@ -682,22 +811,36 @@ impl Builder {
         let cstr = CString::new(name).unwrap();
         let mut is: Vec<LLVMValueRef> = indices.iter().map(|v| v.0).collect();
         Value(unsafe {
-            llvm::core::LLVMBuildGEP(self.0, ptr.0, is.as_mut_ptr(), indices.len() as u32, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildGEP(self.0, ptr.0, is.as_mut_ptr(), indices.len() as u32, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn get_in_bounds_element_pointer(&self, ptr: Value, indices: &[Value], name: &str) -> Value {
+        eprint!("GEP ptr: ");
+        unsafe { llvm::core::LLVMDumpValue(ptr.0); }
+        eprintln!();
+        for i in indices {
+            eprint!("GEP index: ");
+            unsafe { llvm::core::LLVMDumpValue(i.0); }
+            eprintln!();
+        }
         let cstr = CString::new(name).unwrap();
         let mut is: Vec<LLVMValueRef> = indices.iter().map(|v| v.0).collect();
         Value(unsafe {
-            llvm::core::LLVMBuildInBoundsGEP(self.0, ptr.0, is.as_mut_ptr(), indices.len() as u32, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildInBoundsGEP(self.0, ptr.0, is.as_mut_ptr(), indices.len() as u32, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn get_struct_element_pointer(&self, ptr: Value, index: usize, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildStructGEP(self.0, ptr.0, index as u32, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildStructGEP(self.0, ptr.0, index as u32, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
@@ -714,82 +857,106 @@ impl Builder {
     pub fn trunc(&self, v: Value, dst_ty: Type, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildTrunc(self.0, v.0, dst_ty.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildTrunc(self.0, v.0, dst_ty.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn zext(&self, v: Value, dst_ty: Type, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildZExt(self.0, v.0, dst_ty.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildZExt(self.0, v.0, dst_ty.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn sext(&self, v: Value, dst_ty: Type, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildSExt(self.0, v.0, dst_ty.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildSExt(self.0, v.0, dst_ty.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn fp_to_ui(&self, v: Value, dst_ty: Type, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildFPToUI(self.0, v.0, dst_ty.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildFPToUI(self.0, v.0, dst_ty.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn fp_to_si(&self, v: Value, dst_ty: Type, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildFPToUI(self.0, v.0, dst_ty.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildFPToUI(self.0, v.0, dst_ty.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn ui_to_fp(&self, v: Value, dst_ty: Type, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildUIToFP(self.0, v.0, dst_ty.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildUIToFP(self.0, v.0, dst_ty.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn si_to_fp(&self, v: Value, dst_ty: Type, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildSIToFP(self.0, v.0, dst_ty.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildSIToFP(self.0, v.0, dst_ty.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn fptrunc(&self, v: Value, dst_ty: Type, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildFPTrunc(self.0, v.0, dst_ty.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildFPTrunc(self.0, v.0, dst_ty.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn fpext(&self, v: Value, dst_ty: Type, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildFPExt(self.0, v.0, dst_ty.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildFPExt(self.0, v.0, dst_ty.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn ptr_to_int(&self, v: Value, dst_ty: Type, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildPtrToInt(self.0, v.0, dst_ty.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildPtrToInt(self.0, v.0, dst_ty.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
     pub fn int_to_ptr(&self, v: Value, dst_ty: Type, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildIntToPtr(self.0, v.0, dst_ty.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildIntToPtr(self.0, v.0, dst_ty.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
     pub fn bitcast(&self, v: Value, dst_ty: Type, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildBitCast(self.0, v.0, dst_ty.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildBitCast(self.0, v.0, dst_ty.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
@@ -807,21 +974,27 @@ impl Builder {
     pub fn icmp(&self, pred: IntPredicate, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildICmp(self.0, pred.to_internal(), left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildICmp(self.0, pred.to_internal(), left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn fcmp(&self, pred: RealPredicate, left: Value, right: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildFCmp(self.0, pred.to_internal(), left.0, right.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildFCmp(self.0, pred.to_internal(), left.0, right.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn phi(&self, ty: Type, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildPhi(self.0, ty.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildPhi(self.0, ty.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
@@ -829,14 +1002,18 @@ impl Builder {
         let cstr = CString::new(name).unwrap();
         let mut vs: Vec<LLVMValueRef> = argv.iter().map(|v| v.0).collect();
         Value(unsafe {
-            llvm::core::LLVMBuildCall(self.0, fun.0, vs.as_mut_ptr(), argv.len() as u32, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildCall(self.0, fun.0, vs.as_mut_ptr(), argv.len() as u32, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn select(&self, i: Value, t: Value, e: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildSelect(self.0, i.0, t.0, e.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildSelect(self.0, i.0, t.0, e.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
@@ -855,14 +1032,18 @@ impl Builder {
     pub fn is_null(&self, v: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildIsNull(self.0, v.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildIsNull(self.0, v.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 
     pub fn is_not_null(&self, v: Value, name: &str) -> Value {
         let cstr = CString::new(name).unwrap();
         Value(unsafe {
-            llvm::core::LLVMBuildIsNotNull(self.0, v.0, cstr.as_ptr())
+            let insn = llvm::core::LLVMBuildIsNotNull(self.0, v.0, cstr.as_ptr());
+            Value(insn).dump(); eprintln!();
+            insn
         })
     }
 

@@ -10,18 +10,18 @@ pub struct Translate;
 
 impl Translate {
     pub fn translate(r: &mir::Root) -> lir::Root {
+        let externs = r.externs.iter().map(|p| lir::Param { name: p.name, ty: p.ty.clone() }).collect();
+        let datas = r.data.iter().map(|p| ProcTranslator::new().translate_data(p)).collect();
         let procs = r.procs.iter().map(|p| ProcTranslator::new().translate_proc(p)).collect();
-        lir::Root { data: vec![], procs }
+        lir::Root { externs, data: datas, procs }
     }
 }
 
-struct ProcTranslator {
-}
+struct ProcTranslator;
 
 impl ProcTranslator {
     fn new() -> Self {
-        ProcTranslator {
-        }
+        ProcTranslator { }
     }
 
     fn new_temp(&mut self) -> Name {
@@ -32,10 +32,24 @@ impl ProcTranslator {
         Name::fresh("L.lir")
     }
 
+    fn translate_data(&mut self, p: &mir::Data) -> lir::Data {
+        lir::Data {
+            ty: p.ty.clone(),
+            name: p.name.clone(),
+            init: p.init.clone(),
+        }
+    }
+
     fn translate_proc(&mut self, p: &mir::Proc) -> lir::Proc {
         let mut ss = Vec::new();
         let t = self.translate_exp_into(&p.body, &mut ss);
-        ss.push(lir::Stm::Ret { exp: t });
+
+        if let Some(lir::Stm::Ret { .. }) = ss.last() {
+            // don't add a return
+        }
+        else {
+            ss.push(lir::Stm::Ret { exp: t });
+        }
 
         lir::Proc {
             ret_type: p.ret_type.clone(),
@@ -238,11 +252,11 @@ impl ProcTranslator {
             mir::Exp::Lit { lit } => {
                 lir::Exp::Lit { lit: lit.clone() }
             },
-            mir::Exp::Global { name, ty } => {
-                lir::Exp::Global { name: *name, ty: ty.clone() }
+            mir::Exp::GlobalAddr { name, ty } => {
+                lir::Exp::GlobalAddr { name: *name, ty: ty.clone() }
             },
-            mir::Exp::Function { name, ty } => {
-                lir::Exp::Function { name: *name, ty: ty.clone() }
+            mir::Exp::FunctionAddr { name, ty } => {
+                lir::Exp::FunctionAddr { name: *name, ty: ty.clone() }
             },
             mir::Exp::Temp { name, ty } => {
                 lir::Exp::Temp { name: *name, ty: ty.clone() }

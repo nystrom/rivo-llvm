@@ -13,7 +13,7 @@ static mut depth: usize = 0;
 macro_rules! intrinsic {
     ($self: expr, $name: expr, $v1: expr, ($ty1: expr) -> $retty: expr) => {
         $self.builder.call(
-            $self.to_addr(&lir::Exp::Function {
+            $self.to_addr(&lir::Exp::FunctionAddr {
                 ty: mir::Type::Fun {
                     ret: Box::new($retty),
                     args: vec![$ty1]
@@ -25,7 +25,7 @@ macro_rules! intrinsic {
     };
     ($self: expr, $name: expr, $v1: expr, $v2: expr, ($ty1: expr, $ty2: expr) -> $retty: expr) => {
         $self.builder.call(
-            $self.to_addr(&lir::Exp::Function {
+            $self.to_addr(&lir::Exp::FunctionAddr {
                 ty: mir::Type::Fun {
                     ret: Box::new($retty),
                     args: vec![$ty1, $ty2]
@@ -37,7 +37,7 @@ macro_rules! intrinsic {
     };
     ($self: expr, $name: expr, $v1: expr, $v2: expr, $v3: expr, ($ty1: expr, $ty2: expr, $ty3: expr) -> $retty: expr) => {
         $self.builder.call(
-            $self.to_addr(&lir::Exp::Function {
+            $self.to_addr(&lir::Exp::FunctionAddr {
                 ty: mir::Type::Fun {
                     ret: Box::new($retty),
                     args: vec![$ty1, $ty2, $ty3]
@@ -72,11 +72,42 @@ impl Translate {
         }
     }
 
+    fn add_runtime_functions(&self, module: llvm::Module) {
+        let byte_ptr = self.context.pointer_type(self.context.i8_type());
+
+        module.add_function("panic", llvm::Type::function(llvm::Type::void(), &[], false));
+        module.add_function("malloc", llvm::Type::function(byte_ptr, &[self.context.i64_type()], false));
+        module.add_function("box_i32", llvm::Type::function(byte_ptr, &[self.context.i32_type()], false));
+        module.add_function("box_i64", llvm::Type::function(byte_ptr, &[self.context.i64_type()], false));
+        module.add_function("box_f32", llvm::Type::function(byte_ptr, &[self.context.float_type()], false));
+        module.add_function("box_f64", llvm::Type::function(byte_ptr, &[self.context.double_type()], false));
+        module.add_function("unbox_i32", llvm::Type::function(self.context.i32_type(), &[byte_ptr], false));
+        module.add_function("unbox_i64", llvm::Type::function(self.context.i64_type(), &[byte_ptr], false));
+        module.add_function("unbox_f32", llvm::Type::function(self.context.float_type(), &[byte_ptr], false));
+        module.add_function("unbox_f64", llvm::Type::function(self.context.double_type(), &[byte_ptr], false));
+    }
+
     pub fn translate(&self, name: &str, r: &lir::Root) -> llvm::Module {
         let builder = self.context.new_builder();
         let module = llvm::Module::new(name);
 
+        self.add_runtime_functions(module);
+
         let mut funs = Vec::new();
+
+        for d in &r.externs {
+            let ty = Translate::to_type(&self.context, &d.ty);
+            let function = module.add_function(&d.name.to_string(), ty);
+            function.dump(); eprintln!();
+        }
+
+        for d in &r.data {
+            let ty = Translate::to_type(&self.context, &d.ty);
+            let global = module.add_global(&d.name.to_string(), ty);
+            let init = Translate::lit_to_value(&self.context, &d.init);
+            global.set_initializer(init);
+            global.dump(); eprintln!();
+        }
 
         for p in &r.procs {
             let t = ProcTranslator::new(&self.context, &module, &builder);
@@ -93,9 +124,78 @@ impl Translate {
         module
     }
 
+    fn lit_to_value(context: &llvm::Context, lit: &mir::Lit) -> llvm::Value {
+        match lit {
+            mir::Lit::Null { ty } => {
+                llvm::Value::null(Translate::to_type(context, ty))
+            },
+            mir::Lit::Void => {
+                // If we have to generate a void literal, just generate an int.
+                llvm::Value::i32(0)
+            },
+            mir::Lit::I1 { value } => {
+                llvm::Value::i1(*value)
+            },
+            mir::Lit::I8 { value } => {
+                llvm::Value::i8(*value)
+            },
+            mir::Lit::I16 { value } => {
+                llvm::Value::i16(*value)
+            },
+            mir::Lit::I32 { value } => {
+                llvm::Value::i32(*value)
+            },
+            mir::Lit::I64 { value } => {
+                llvm::Value::i64(*value)
+            },
+            mir::Lit::F32 { value } => {
+                llvm::Value::float(*value)
+            },
+            mir::Lit::F64 { value } => {
+                llvm::Value::double(*value)
+            },
+            mir::Lit::Sizeof { ty } => {
+                // TODO
+                if WORDSIZE == 4 {
+                    llvm::Value::i32(WORDSIZE as i32)
+                }
+                else {
+                    llvm::Value::i64(WORDSIZE as i64)
+                }
+            },
+            mir::Lit::ArrayBaseOffset => {
+                if WORDSIZE == 4 {
+                    llvm::Value::i32(WORDSIZE as i32)
+                }
+                else {
+                    llvm::Value::i64(WORDSIZE as i64)
+                }
+            },
+            mir::Lit::ArrayLengthOffset => {
+                if WORDSIZE == 4 {
+                    llvm::Value::i32(0)
+                }
+                else {
+                    llvm::Value::i64(0)
+                }
+            },
+            mir::Lit::StructFieldOffset { ty, field } => {
+                // TODO
+                if WORDSIZE == 4 {
+                    llvm::Value::i32((*field * WORDSIZE) as i32)
+                }
+                else {
+                    llvm::Value::i64((*field * WORDSIZE) as i64)
+                }
+            },
+        }
+    }
+
     fn to_type(context: &llvm::Context, ty: &lir::Type) -> llvm::Type {
         match ty {
             lir::Type::I1 => context.i1_type(),
+            lir::Type::I8 => context.i8_type(),
+            lir::Type::I16 => context.i16_type(),
             lir::Type::I32 => context.i32_type(),
             lir::Type::I64 => context.i64_type(),
             lir::Type::F32 => context.float_type(),
@@ -112,7 +212,7 @@ impl Translate {
                     Translate::to_type(context, &lir::Type::Word),
                     context.array_type(t, 0),
                 ];
-                context.structure_type(&ps, false)
+                context.pointer_type(context.structure_type(&ps, false))
             },
             lir::Type::Struct { fields } => {
                 let ps: Vec<llvm::Type> = fields.iter().map(|a| Translate::to_type(context, a)).collect();
@@ -198,6 +298,7 @@ impl<'a> BodyTranslator<'a> {
                 continue;
             }
 
+            eprintln!("; alloca {} :: {:?}", x, xty);
             let ty = self.to_type(xty);
             let insn = self.builder.alloca(ty, &self.fresh_name());
             self.temps.insert(*x, insn.clone());
@@ -247,20 +348,19 @@ impl<'a> BodyTranslator<'a> {
 
     fn to_value(&mut self, e: &lir::Exp) -> llvm::Value {
         match e {
-            lir::Exp::Global { name, ty } => {
-                let a = self.to_addr(e);
-                let insn = self.builder.load(a, &self.fresh_name());
-                insn
+            lir::Exp::GlobalAddr { name, ty } => {
+                self.to_addr(e)
             },
-            lir::Exp::Function { name, ty } => {
-                let a = self.to_addr(e);
-                let insn = self.builder.load(a, &self.fresh_name());
-                insn
+            lir::Exp::FunctionAddr { name, ty } => {
+                self.to_addr(e)
             },
             lir::Exp::Temp { name, ty } => {
                 match self.params.get(&name) {
                     Some(v) => {
-                        v.clone()
+                        // Params should not be loaded.
+                        let insn = v.clone();
+                        eprintln!("; {:?}", e); eprint!("; "); insn.dump(); eprintln!();
+                        insn
                     },
                     None => {
                         let a = self.to_addr(e);
@@ -269,64 +369,18 @@ impl<'a> BodyTranslator<'a> {
                     }
                 }
             },
-            lir::Exp::Lit { lit: mir::Lit::I1 { value } } => {
-                llvm::Value::i1(*value)
-            },
-            lir::Exp::Lit { lit: mir::Lit::I32 { value } } => {
-                llvm::Value::i32(*value)
-            },
-            lir::Exp::Lit { lit: mir::Lit::I64 { value } } => {
-                llvm::Value::i64(*value)
-            },
-            lir::Exp::Lit { lit: mir::Lit::F32 { value } } => {
-                llvm::Value::float(*value)
-            },
-            lir::Exp::Lit { lit: mir::Lit::F64 { value } } => {
-                llvm::Value::double(*value)
-            },
-            lir::Exp::Lit { lit: mir::Lit::Sizeof { ty } } => {
-                // TODO
-                if WORDSIZE == 4 {
-                    llvm::Value::i32(WORDSIZE as i32)
-                }
-                else {
-                    llvm::Value::i64(WORDSIZE as i64)
-                }
-            },
-            lir::Exp::Lit { lit: mir::Lit::ArrayBaseOffset } => {
-                if WORDSIZE == 4 {
-                    llvm::Value::i32(WORDSIZE as i32)
-                }
-                else {
-                    llvm::Value::i64(WORDSIZE as i64)
-                }
-            },
-            lir::Exp::Lit { lit: mir::Lit::ArrayLengthOffset } => {
-                if WORDSIZE == 4 {
-                    llvm::Value::i32(0)
-                }
-                else {
-                    llvm::Value::i64(0)
-                }
-            },
-            lir::Exp::Lit { lit: mir::Lit::StructFieldOffset { ty, field} } => {
-                // TODO
-                if WORDSIZE == 4 {
-                    llvm::Value::i32((*field * WORDSIZE) as i32)
-                }
-                else {
-                    llvm::Value::i64((*field * WORDSIZE) as i64)
-                }
-            },
+            lir::Exp::Lit { lit } => {
+                Translate::lit_to_value(&self.context, lit)
+            }
         }
     }
 
     fn to_addr(&mut self, e: &lir::Exp) -> llvm::Value {
         match e {
-            lir::Exp::Global { name, ty } => {
+            lir::Exp::GlobalAddr { name, ty } => {
                 self.module.get_named_global(&name.to_string())
             },
-            lir::Exp::Function { name, ty } => {
+            lir::Exp::FunctionAddr { name, ty } => {
                 self.module.get_named_function(&name.to_string())
             },
             lir::Exp::Temp { name, ty } => {
@@ -357,6 +411,8 @@ impl<'a> BodyTranslator<'a> {
     }
 
     fn translate_stm(&mut self, stm: &lir::Stm) {
+        println!("stm = {:#?}", stm);
+
         let insn = match stm {
             lir::Stm::CJump { cmp, if_true, if_false } => {
                 let i = self.to_value(cmp);
@@ -369,27 +425,39 @@ impl<'a> BodyTranslator<'a> {
                 self.builder.br(l)
             },
             lir::Stm::Ret { exp } => {
+                use crate::mir::typed::*;
                 let v = self.to_value(exp);
-                self.builder.ret(v)
+                if exp.get_type() == mir::Type::Void {
+                    self.builder.ret_void()
+                }
+                else {
+                    self.builder.ret(v)
+                }
             },
             lir::Stm::Store { dst_addr, src } => {
                 let v = self.to_value(src);
-                let p = self.to_addr(dst_addr);
+                let p = self.to_value(dst_addr);
                 self.builder.store(v, p)
             },
             lir::Stm::Load { dst, src_addr } => {
-                let p = self.to_addr(src_addr);
+                let p = self.to_value(src_addr);
                 let v = self.builder.load(p, &self.fresh_name());
                 let x = self.to_addr(dst);
                 self.builder.store(v, x)
             },
             lir::Stm::Move { dst, src } => {
-                let x = self.to_addr(dst);
-                let v = self.to_value(src);
-                self.builder.store(v, x)
+                use crate::mir::typed::*;
+                if dst.get_type() == mir::Type::Void {
+                    self.to_value(src)
+                }
+                else {
+                    let x = self.to_addr(dst);
+                    let v = self.to_value(src);
+                    self.builder.store(v, x)
+                }
             },
             lir::Stm::Call { dst, fun, args } => {
-                let f = self.to_addr(fun);
+                let f = self.to_value(fun);
                 let vs: Vec<llvm::Value> = args.iter().map(|a| self.to_value(a)).collect();
                 let v = self.builder.call(f, &vs, &self.fresh_name());
                 let x = self.to_addr(dst);
@@ -514,6 +582,7 @@ impl<'a> BodyTranslator<'a> {
                     Bop::Atan2_f32 => unimplemented!(),
                     Bop::Atan2_f64 => unimplemented!(),
                 };
+
                 let x = self.to_addr(dst);
                 self.builder.store(v, x)
             },
@@ -640,14 +709,35 @@ impl<'a> BodyTranslator<'a> {
                 let x = self.to_addr(dst);
                 self.builder.store(v, x)
             },
-            lir::Stm::GetStructElementAddr { dst, struct_ty, ptr, field: usize } => {
-                unimplemented!()
+            lir::Stm::GetStructElementAddr { dst, struct_ty, ptr, field } => {
+                let p = self.to_value(ptr);
+                // let base = llvm::Value::i32(0); // struct fields are i32
+                // let i = llvm::Value::i32(*field as i32);
+                // let v = self.builder.get_in_bounds_element_pointer(p, &[base, i], &self.fresh_name());
+                let v = self.builder.get_struct_element_pointer(p, *field, &self.fresh_name());
+                let x = self.to_addr(dst);
+                self.builder.store(v, x)
             },
             lir::Stm::GetArrayElementAddr { dst, base_ty, ptr, index } => {
-                unimplemented!()
+                let a = self.to_value(ptr);
+                let i = self.to_value(index);
+                    // Get the pointer to the base of the data.
+                    // let b = self.builder.get_struct_element_pointer(a, 1, &self.fresh_name());
+                    // Get the pointer to the array element.
+                    // let v = self.builder.get_in_bounds_element_pointer(b, &[i], &self.fresh_name());
+                // Get the pointer to the array element, indexing by 1 to get the base of the array 
+                // and then by i to get the element.
+                let base = llvm::Value::i32(1); // struct fields are i32
+                let v = self.builder.get_in_bounds_element_pointer(a, &[base, i], &self.fresh_name());
+                let x = self.to_addr(dst);
+                self.builder.store(v, x)
             },
             lir::Stm::GetArrayLengthAddr { dst, ptr } => {
-                unimplemented!()
+                let a = self.to_value(ptr);
+                // Get the pointer to the length field.
+                let v = self.builder.get_struct_element_pointer(a, 0, &self.fresh_name());
+                let x = self.to_addr(dst);
+                self.builder.store(v, x)
             },
 
             // These should be handled by the caller.
@@ -666,8 +756,8 @@ struct TempFinder;
 impl TempFinder {
     fn add_temps_for_exp(e: &lir::Exp, temps: &mut HashSet<(Name, mir::Type)>) {
         match e {
-            lir::Exp::Global { name, ty } => {},
-            lir::Exp::Function { name, ty } => {},
+            lir::Exp::GlobalAddr { name, ty } => {},
+            lir::Exp::FunctionAddr { name, ty } => {},
             lir::Exp::Temp { name, ty } => { temps.insert((*name, ty.clone())); }
             lir::Exp::Lit { lit } => {},
         }

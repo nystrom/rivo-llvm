@@ -6,38 +6,119 @@ pub trait Typed {
 }
 
 impl Typed for Stm {
-    fn get_type(&self) -> Type { Type::Void }
+    fn get_type(&self) -> Type {
+        // Check the types.
+        println!("checking stm {:#?}", self);
+        match self {
+            Stm::Nop => {},
+            Stm::CJump { cond, if_true, if_false } => {},
+            Stm::Jump { label } => {},
+            Stm::Label { label } => {},
+            Stm::Move { ty, lhs, rhs } => {
+                // ty should be the type of rhs
+                assert_eq!(ty, &rhs.get_type())
+            },
+            Stm::Store { ty, ptr, value } => {
+                // ty should be the type of value
+                // ptr should have type Ptr { ty }
+                let vty = value.get_type();
+                let pty = ptr.get_type();
+                println!("checking stm {:#?}", self);
+                assert_eq!(ty, &vty);
+                assert_eq!(Type::Ptr { ty: Box::new(ty.clone()) }, pty);
+            },
+            Stm::Return { exp } => {},
+        }
+
+        Type::Void
+    }
 }
 
+// Compute the type of each expression.
+// Also asserts that the types are consistent.
 impl Typed for Exp {
     fn get_type(&self) -> Type {
-        match self {
-            Exp::Block { body, exp } => exp.get_type(),
-            Exp::Call { fun_type: Type::Fun { box ret, .. }, fun, args } => ret.clone(),
-            Exp::Load { ty, ptr } => ty.clone(),
+        println!("checking exp {:#?}", self);
+        let ty = match self {
+            Exp::Block { body, exp } => {
+                for s in body {
+                    assert_eq!(s.get_type(), Type::Void);
+                }
+                exp.get_type()
+            },
+            Exp::Call { fun_type: Type::Fun { box ret, args: arg_types }, fun, args } => {
+                assert_eq!(fun.get_type(), Type::Ptr { ty: Box::new(Type::Fun { ret: Box::new(ret.clone()), args: arg_types.clone() }) });
+                let actual_types: Vec<Type> = args.iter().map(|a| a.get_type()).collect();
+                assert_eq!(arg_types, &actual_types);
+                ret.clone()
+            },
+            Exp::Call { fun_type, fun, args } => {
+                panic!("call function type must be a function type, got {:?}", fun_type)
+            },
+            Exp::Load { ty, ptr } => {
+                assert_eq!(ptr.get_type(), Type::Ptr { ty: Box::new(ty.clone()) });
+                ty.clone()
+            }
             Exp::Binary { op, e1, e2 } => op.get_type(),
             Exp::Unary { op, exp } => op.get_type(),
-            Exp::Cast { ty, exp } => ty.clone(),
+            Exp::Cast { ty, exp } => {
+                // Both should be pointer types.
+                assert!(match exp.get_type() { Type::Ptr { .. } => true, _ => false }, "can only cast from ptr types, got {:?}", exp.get_type());
+                assert!(match ty { Type::Ptr { .. } => true, _ => false }, "can only cast to ptr types, got {:?}", exp.get_type());
+                ty.clone()
+            },
             Exp::Lit { lit } => lit.get_type(),
-            Exp::Function { name, ty } => ty.clone(),
-            Exp::Global { name, ty } => ty.clone(),
-            Exp::Temp { name, ty } => ty.clone(),
+            Exp::FunctionAddr { name, ty } => {
+                // Functions should not have function type.
+                assert!(match ty { Type::Ptr { ty: box Type::Fun { .. } } => true, _ => false }, "function variables should have fun ptr type, got {:?}", ty);
+                ty.clone()
+            },
+            Exp::GlobalAddr { name, ty } => {
+                // Globals should not have function type.
+                assert!(match ty { Type::Ptr { ty: box Type::Fun { .. } } => false, _ => true }, "global variables cannot be fun ptr type, got {:?}", ty);
+                assert!(match ty { Type::Fun { .. } => false, _ => true }, "global variables cannot be fun type, got {:?}", ty);
+                ty.clone()
+            },
+            Exp::Temp { name, ty } => {
+                assert!(match ty { Type::Fun { .. } => false, _ => true }, "temporary variables cannot be fun type, got {:?}", ty);
+                ty.clone()
+            },
             Exp::GetStructElementAddr { struct_ty: Type::Struct { fields }, ptr, field } => {
+                assert_eq!(Type::Ptr { ty: Box::new(Type::Struct { fields: fields.clone() }) }, ptr.get_type());
                 match fields.get(*field) {
                     Some(ty) => Type::Ptr { ty: Box::new(ty.clone()) },
-                    _ => panic!("ill-typed expression {:?}", self)
+                    _ => panic!("ill-typed expression {:#?}, field {} does not exist", self, field)
                 }
             },
-            Exp::GetArrayElementAddr { base_ty, ptr, index } => Type::Ptr { ty: Box::new(base_ty.clone()) },
+            Exp::GetStructElementAddr { struct_ty, ptr, field } => {
+                panic!("struct accessor must have struct type, got {:?}", struct_ty)
+            },
+            Exp::GetArrayElementAddr { base_ty, ptr, index } => {
+                assert_eq!(Type::Ptr { ty: Box::new(Type::Array { ty: Box::new(base_ty.clone()) }) }, ptr.get_type());
+                Type::Ptr { ty: Box::new(base_ty.clone()) }
+            },
             Exp::GetArrayLengthAddr { ptr } => Type::Ptr { ty: Box::new(Type::Word) },
-            _ => panic!("ill-typed expression {:?}", self)
-        }
+        };
+
+        // match ty {
+        //     Type::Ptr { ty: box Type::Ptr { .. } } => panic!("found pointer to pointer {:#?} in {:#?}", ty, self),
+        //     _ => {},
+        // }
+
+        ty
     }
 }
 impl Typed for Lit {
     fn get_type(&self) -> Type {
         match self {
+            Lit::Null { ty } => {
+                assert!(match ty { Type::Ptr { .. } => true, _ => false }, "null literals must have pointer type, got {:?}", ty);
+                ty.clone()
+            },
+            Lit::Void => Type::Void,
             Lit::I1 { value } => Type::I1,
+            Lit::I8 { value } => Type::I8,
+            Lit::I16 { value } => Type::I16,
             Lit::I32 { value } => Type::I32,
             Lit::I64 { value } => Type::I64,
             Lit::F32 { value } => Type::F32,

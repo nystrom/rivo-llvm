@@ -3,17 +3,17 @@ use crate::mir::trees as mir;
 use super::mir_gen;
 
 pub fn alloc() -> mir::Exp {
-    let void_ptr = mir::Type::Struct { fields: vec![] };
-    mir::Exp::Global {
+    let byte_ptr = mir::Type::Ptr { ty: Box::new(mir::Type::I8) };
+    mir::Exp::FunctionAddr {
         name: Name::new("malloc"),
-        ty: mir::Type::Fun { ret: Box::new(void_ptr), args: vec![mir::Type::I32] },
+        ty: mir::Type::Ptr { ty: Box::new(mir::Type::Fun { ret: Box::new(byte_ptr), args: vec![mir::Type::Word] }) },
     }
 }
 
 pub fn panic() -> mir::Exp {
-    mir::Exp::Global {
+    mir::Exp::FunctionAddr {
         name: Name::new("panic"),
-        ty: mir::Type::Fun { ret: Box::new(mir::Type::Void), args: vec![] },
+        ty: mir::Type::Ptr { ty: Box::new(mir::Type::Fun { ret: Box::new(mir::Type::Void), args: vec![] }) },
     }
 }
 
@@ -27,11 +27,11 @@ pub fn boxer(ty: &mir::Type) -> mir::Exp {
         _ => unimplemented!()
     };
 
-    let void_ptr = mir::Type::Struct { fields: vec![] };
+    let byte_ptr = mir::Type::Ptr { ty: Box::new(mir::Type::I8) };
 
-    mir::Exp::Global {
+    mir::Exp::FunctionAddr {
         name: Name::new(name),
-        ty: mir::Type::Fun { ret: Box::new(void_ptr), args: vec![ty.clone()] },
+        ty: mir::Type::Ptr { ty: Box::new(mir::Type::Fun { ret: Box::new(byte_ptr), args: vec![ty.clone()] }) },
     }
 }
 
@@ -45,10 +45,10 @@ pub fn unboxer(ty: &mir::Type) -> mir::Exp {
         _ => unimplemented!()
     };
 
-    let void_ptr = mir::Type::Struct { fields: vec![] };
+    let byte_ptr = mir::Type::Ptr { ty: Box::new(mir::Type::I8) };
 
-    mir::Exp::Global {
+    mir::Exp::FunctionAddr {
         name: Name::new(name),
-        ty: mir::Type::Fun { ret: Box::new(ty.clone()), args: vec![void_ptr]},
+        ty: mir::Type::Ptr { ty: Box::new(mir::Type::Fun { ret: Box::new(ty.clone()), args: vec![byte_ptr] }) },
     }
 }

@@ -29,6 +29,8 @@ mod hircc {
         Lit { lit: Lit },
         Call { fun_type: Type, name: Name, args: Vec<Exp> },
         Var { name: Name, ty: Type },
+        Global { name: Name, ty: Type },
+        Function { name: Name, ty: Type },
 
         Binary { op: Bop, e1: Box<Exp>, e2: Box<Exp> },
         Unary { op: Uop, exp: Box<Exp> },
@@ -40,6 +42,7 @@ mod hircc {
         ApplyCC { fun_type: Type, fun: Box<Exp>, args: Vec<Exp> },
 
         StructLit { fields: Vec<Field> },
+        ClosureLit { fun_type: Type, fun: Box<Exp>, env: Box<Exp> },
         StructLoad { ty: Type, base: Box<Exp>, field: Name },
 
         Box { ty: Type, exp: Box<Exp> },
@@ -158,6 +161,12 @@ impl FV for Exp {
                 s.insert(*name, ty.clone());
                 s
             },
+            Exp::Global { name, ty } => {
+                HashMap::new()
+            },
+            Exp::Function { name, ty } => {
+                HashMap::new()
+            },
             Exp::Binary { op, e1, e2 } => {
                 union!(e1.fv(), e2.fv())
             },
@@ -267,6 +276,12 @@ impl Substitute for hircc::Exp {
                     None => hircc::Exp::Var { name: *name, ty: ty.clone() }
                 }
             },
+            hircc::Exp::Global { ty, name } => {
+                hircc::Exp::Global { name: *name, ty: ty.clone() }
+            },
+            hircc::Exp::Function { ty, name } => {
+                hircc::Exp::Function { name: *name, ty: ty.clone() }
+            },
             hircc::Exp::Binary { op, e1, e2 } => {
                 hircc::Exp::Binary { op: *op, e1: e1.subst(s), e2: e2.subst(s) }
             },
@@ -309,6 +324,9 @@ impl Substitute for hircc::Exp {
 
             hircc::Exp::StructLit { fields } => {
                 hircc::Exp::StructLit { fields: fields.subst(s) }
+            },
+            hircc::Exp::ClosureLit { fun_type, fun, env } => {
+                hircc::Exp::ClosureLit { fun_type: fun_type.clone(), fun: fun.subst(s), env: env.subst(s) }
             },
             hircc::Exp::StructLoad { ty, base, field } => {
                 hircc::Exp::StructLoad { ty: ty.clone(), base: base.subst(s), field: *field }
@@ -388,6 +406,12 @@ impl CC<hircc::Exp> for Exp {
             Exp::Var { name, ty } => {
                 hircc::Exp::Var { name: *name, ty: ty.clone() }
             },
+            Exp::Global { name, ty } => {
+                hircc::Exp::Global { name: *name, ty: ty.clone() }
+            },
+            Exp::Function { name, ty } => {
+                hircc::Exp::Function { name: *name, ty: ty.clone() }
+            },
 
             Exp::Binary { op, e1, e2 } => {
                 hircc::Exp::Binary { op: *op, e1: Box::new(e1.convert(fresh_name_generator, globals)), e2: Box::new(e2.convert(fresh_name_generator, globals)) }
@@ -447,13 +471,9 @@ impl CC<hircc::Exp> for Exp {
                 let internal_env_type = Type::Struct { fields: env_params };
                 let external_env_type = Type::Struct { fields: vec![] };   // the environment type as seen by the caller (basically a void*)
 
-                let mut arg_types = Vec::new();
-                arg_types.extend(params.iter().map(|p| p.ty.clone()));
-                arg_types.push(external_env_type.clone());
-
                 let fun_type = Type::Fun {
                     ret: Box::new(ret_type.clone()),
-                    args: arg_types,
+                    args: params.iter().map(|p| p.ty.clone()).collect(),
                 };
 
                 // Build a substitution.
@@ -469,39 +489,29 @@ impl CC<hircc::Exp> for Exp {
 
                 let cc_body = body.convert(fresh_name_generator, globals).subst(&s);
 
-                let fun_field = Param { name: Name::new("fun"), ty: fun_type.clone() };
-                let env_field = Param { name: Name::new("env"), ty: external_env_type.clone() };
-
-                hircc::Exp::StructLit {
-                    fields: vec![
-                        hircc::Field {
-                            param: fun_field,
-                            exp: Box::new(
-                                hircc::Exp::LambdaCC {
-                                    ret_type: ret_type.clone(),
-                                    env_param: Param {
-                                        name: env,
-                                        ty: internal_env_type.clone(),
-                                    },
-                                    params: params.clone(),
-                                    body: Box::new(cc_body),
-                                }
-                            ),
-                        },
-                        hircc::Field {
-                            param: env_field,
-                            exp: Box::new(
-                                hircc::Exp::Cast {
-                                    ty: external_env_type.clone(),
-                                    exp: Box::new(
-                                        hircc::Exp::StructLit {
-                                            fields: env_fields
-                                        }
-                                    )
-                                }
-                            ),
+                hircc::Exp::ClosureLit {
+                    fun_type: fun_type.clone(),
+                    fun: Box::new(
+                        hircc::Exp::LambdaCC {
+                            ret_type: ret_type.clone(),
+                            env_param: Param {
+                                name: env,
+                                ty: internal_env_type.clone(),
+                            },
+                            params: params.clone(),
+                            body: Box::new(cc_body),
                         }
-                    ]
+                    ),
+                    env: Box::new(
+                        hircc::Exp::Cast {
+                            ty: external_env_type.clone(),
+                            exp: Box::new(
+                                hircc::Exp::StructLit {
+                                    fields: env_fields
+                                }
+                            )
+                        }
+                    ),
                 }
             },
             Exp::Apply { fun_type, fun, args } => {
@@ -583,10 +593,10 @@ impl LambdaLift {
     fn lambda_lift_def(def: &Def, fresh_name_generator: &mut FreshNameGenerator, globals: &HashSet<Name>, decls: &mut Vec<Def>) -> Def {
         match def {
             Def::VarDef { ty, name, exp } => {
-                Def::VarDef { ty: ty.clone(), name: *name, exp: Box::new(exp.convert(fresh_name_generator, globals).lambda_lift(fresh_name_generator, decls)) }
+                Def::VarDef { ty: ty.lift_type(), name: *name, exp: Box::new(exp.convert(fresh_name_generator, globals).lambda_lift(fresh_name_generator, decls)) }
             },
             Def::FunDef { ret_type, name, params, body } => {
-                Def::FunDef { ret_type: ret_type.clone(), name: *name, params: params.clone(), body: Box::new(body.convert(fresh_name_generator, globals).lambda_lift(fresh_name_generator, decls)) }
+                Def::FunDef { ret_type: ret_type.lift_type(), name: *name, params: params.lift_type(), body: Box::new(body.convert(fresh_name_generator, globals).lambda_lift(fresh_name_generator, decls)) }
             },
             Def::ExternDef { ty, name } => {
                 Def::ExternDef { ty: ty.clone(), name: *name }
@@ -600,17 +610,71 @@ pub trait LL<T> {
     fn lambda_lift(&self, fresh_name_generator: &mut FreshNameGenerator, decls: &mut Vec<Def>) -> T;
 }
 
+trait TypeLifter {
+    fn lift_type(&self) -> Self;
+}
+
+impl<A: TypeLifter> TypeLifter for Vec<A> {
+    fn lift_type(&self) -> Vec<A> {
+        self.iter().map(|t| t.lift_type()).collect()
+    }
+}
+
+impl TypeLifter for Param {
+    fn lift_type(&self) -> Param {
+        Param { ty: self.ty.lift_type(), name: self.name }
+    }
+}
+
+impl TypeLifter for Type {
+    fn lift_type(&self) -> Type {
+
+        match self {
+            Type::Fun { ret, args } => {
+                // Function types turn into closure types with the code pointer taking an extract env pointer argument.
+                let external_env_type = Type::Struct { fields: vec![] };
+
+                let mut new_args = Vec::new();
+                for a in args {
+                    new_args.push(a.lift_type());
+                }
+                new_args.push(external_env_type.clone());
+
+                Type::Struct {
+                    fields: vec![
+                        Param { name: Name::new("fun"), ty: Type::Fun { ret: Box::new(ret.lift_type()), args: new_args } },
+                        Param { name: Name::new("env"), ty: external_env_type.clone() }
+                    ]
+                }
+            },
+            Type::Struct { fields } => {
+                Type::Struct { fields: fields.lift_type() }
+            },
+            Type::Array { ty } => {
+                Type::Array { ty: Box::new(ty.lift_type()) }
+            },
+            Type::I32 => Type::I32,
+            Type::I64 => Type::I64,
+            Type::F32 => Type::F32,
+            Type::F64 => Type::F64,
+            Type::Bool => Type::Bool,
+            Type::Void => Type::Void,
+            Type::Box => Type::Box,
+        }
+    }
+}
+
 impl LL<Exp> for hircc::Exp {
     fn lambda_lift(&self, fresh_name_generator: &mut FreshNameGenerator, decls: &mut Vec<Def>) -> Exp {
         match self {
             hircc::Exp::NewArray { ty, length } => {
-                Exp::NewArray { ty: ty.clone(), length: Box::new(length.lambda_lift(fresh_name_generator, decls)) }
+                Exp::NewArray { ty: ty.lift_type(), length: Box::new(length.lambda_lift(fresh_name_generator, decls)) }
             },
             hircc::Exp::ArrayLit { ty, exps } => {
-                Exp::ArrayLit { ty: ty.clone(), exps: exps.iter().map(|e| e.lambda_lift(fresh_name_generator, decls)).collect() }
+                Exp::ArrayLit { ty: ty.lift_type(), exps: exps.iter().map(|e| e.lambda_lift(fresh_name_generator, decls)).collect() }
             },
             hircc::Exp::ArrayLoad { bounds_check, ty, array, index } => {
-                Exp::ArrayLoad { bounds_check: *bounds_check, ty: ty.clone(), array: Box::new(array.lambda_lift(fresh_name_generator, decls)), index: Box::new(index.lambda_lift(fresh_name_generator, decls)) }
+                Exp::ArrayLoad { bounds_check: *bounds_check, ty: ty.lift_type(), array: Box::new(array.lambda_lift(fresh_name_generator, decls)), index: Box::new(index.lambda_lift(fresh_name_generator, decls)) }
             },
             hircc::Exp::ArrayLength { array } => {
                 Exp::ArrayLength { array: Box::new(array.lambda_lift(fresh_name_generator, decls)) }
@@ -622,7 +686,13 @@ impl LL<Exp> for hircc::Exp {
                 Exp::Call { fun_type: fun_type.clone(), name: *name, args: args.iter().map(|e| e.lambda_lift(fresh_name_generator, decls)).collect() }
             },
             hircc::Exp::Var { name, ty } => {
-                Exp::Var { name: *name, ty: ty.clone() }
+                Exp::Var { name: *name, ty: ty.lift_type() }
+            },
+            hircc::Exp::Global { name, ty } => {
+                Exp::Global { name: *name, ty: ty.lift_type() }
+            },
+            hircc::Exp::Function { name, ty } => {
+                Exp::Function { name: *name, ty: ty.lift_type() }
             },
 
             hircc::Exp::Binary { op, e1, e2 } => {
@@ -632,19 +702,19 @@ impl LL<Exp> for hircc::Exp {
                 Exp::Unary { op: *op, exp: Box::new(exp.lambda_lift(fresh_name_generator, decls)) }
             },
             hircc::Exp::Box { ty, exp } => {
-                Exp::Box { ty: ty.clone(), exp: Box::new(exp.lambda_lift(fresh_name_generator, decls)) }
+                Exp::Box { ty: ty.lift_type(), exp: Box::new(exp.lambda_lift(fresh_name_generator, decls)) }
             },
             hircc::Exp::Unbox { ty, exp } => {
-                Exp::Unbox { ty: ty.clone(), exp: Box::new(exp.lambda_lift(fresh_name_generator, decls)) }
+                Exp::Unbox { ty: ty.lift_type(), exp: Box::new(exp.lambda_lift(fresh_name_generator, decls)) }
             },
             hircc::Exp::Cast { ty, exp } => {
-                Exp::Cast { ty: ty.clone(), exp: Box::new(exp.lambda_lift(fresh_name_generator, decls)) }
+                Exp::Cast { ty: ty.lift_type(), exp: Box::new(exp.lambda_lift(fresh_name_generator, decls)) }
             },
             hircc::Exp::Seq { body, exp } => {
                 Exp::Seq { body: Box::new(body.lambda_lift(fresh_name_generator, decls)), exp: Box::new(exp.lambda_lift(fresh_name_generator, decls)) }
             },
-            hircc::Exp::Let {inits, body } => {
-                Exp::Let { inits: inits.iter().map(|f| Field { param: f.param.clone(), exp: Box::new(f.exp.lambda_lift(fresh_name_generator, decls)) }).collect(), body: Box::new(body.lambda_lift(fresh_name_generator, decls)) }
+            hircc::Exp::Let { inits, body } => {
+                Exp::Let { inits: inits.iter().map(|f| Field { param: f.param.lift_type(), exp: Box::new(f.exp.lambda_lift(fresh_name_generator, decls)) }).collect(), body: Box::new(body.lambda_lift(fresh_name_generator, decls)) }
             },
             hircc::Exp::LambdaCC { ret_type, env_param, params, body } => {
                 let f = fresh_name_generator.fresh("lifted");
@@ -661,11 +731,11 @@ impl LL<Exp> for hircc::Exp {
                 });
 
                 // Create the function type, using the opaque env pointer type.
-                let mut args: Vec<Type> = params.iter().map(|p| p.ty.clone()).collect();
+                let mut args: Vec<Type> = params.iter().map(|p| p.ty.lift_type()).collect();
                 args.push(external_env_type.clone());
 
                 let fun_type = Type::Fun {
-                    ret: Box::new(ret_type.clone()),
+                    ret: Box::new(ret_type.lift_type()),
                     args: args
                 };
 
@@ -675,11 +745,11 @@ impl LL<Exp> for hircc::Exp {
                 // Cast the env parameter to the more specific type, using the name
                 // that was used for the env parameter during closure conversion.
                 let env_ptr = Exp::Var { ty: external_env_type.clone(), name: env_param_name };
-                let cast = Exp::Cast { ty: env_param.ty.clone(), exp: Box::new(env_ptr) };
+                let cast = Exp::Cast { ty: env_param.ty.lift_type(), exp: Box::new(env_ptr) };
                 let exp = Exp::Let {
                     inits: vec![
                         Field {
-                            param: env_param.clone(),
+                            param: env_param.lift_type(),
                             exp: Box::new(cast)
                         }
                     ],
@@ -688,14 +758,14 @@ impl LL<Exp> for hircc::Exp {
 
                 // Declare the function using the new lifted body with cast.
                 decls.push(Def::FunDef {
-                    ret_type: ret_type.clone(),
+                    ret_type: ret_type.lift_type(),
                     name: f,
                     params: def_params.clone(),
                     body: Box::new(exp),
                 });
 
                 // Return a variable with the external function type.
-                Exp::Var { name: f, ty: fun_type }
+                Exp::Function { name: f, ty: fun_type }
             },
             hircc::Exp::ApplyCC { fun_type, fun, args } => {
                 // The caller doesn't know the environment type, just that it's a struct.
@@ -703,12 +773,8 @@ impl LL<Exp> for hircc::Exp {
 
                 let closure = fresh_name_generator.fresh("closure");
                 let mut closure_args: Vec<Exp> = args.iter().map(|e| e.lambda_lift(fresh_name_generator, decls)).collect();
-                let closure_type = Type::Struct {
-                    fields: vec![
-                        Param { name: Name::new("fun"), ty: fun_type.clone() },
-                        Param { name: Name::new("env"), ty: env_type.clone() } // TODO
-                    ]
-                };
+                let closure_type = fun_type.lift_type();
+
                 // Add environment at the end of the arguments.
                 closure_args.push(
                     Exp::StructLoad {
@@ -722,10 +788,10 @@ impl LL<Exp> for hircc::Exp {
                     Type::Fun { ret, args } => {
                         let mut new_args = Vec::new();
                         for a in args {
-                            new_args.push(a.clone());
+                            new_args.push(a.lift_type());
                         }
                         new_args.push(env_type.clone());
-                        Type::Fun { ret: ret.clone(), args: new_args }
+                        Type::Fun { ret: Box::new(ret.lift_type()), args: new_args }
                     },
                     _ => panic!("ApplyCC type should be a function type")
                 };
@@ -754,11 +820,48 @@ impl LL<Exp> for hircc::Exp {
             },
             hircc::Exp::StructLit { fields } => {
                 Exp::StructLit {
-                    fields: fields.iter().map(|f| Field { param: f.param.clone(), exp: Box::new(f.exp.lambda_lift(fresh_name_generator, decls)) }).collect()
+                    fields: fields.iter().map(|f| Field { param: f.param.lift_type(), exp: Box::new(f.exp.lambda_lift(fresh_name_generator, decls)) }).collect()
                  }
             },
+            hircc::Exp::ClosureLit { fun_type, fun, env } => {
+                let env_type = Type::Struct { fields: vec![] };
+
+                // distinguish between closure lits and other struct literals
+                // in that we don't convert the fun_type into a closure type, but we do lift the function type itself.
+                let cc_fun_type = match fun_type {
+                    Type::Fun { ret, args } => {
+                        let mut new_args = Vec::new();
+                        for a in args {
+                            new_args.push(a.lift_type());
+                        }
+                        new_args.push(env_type.clone());
+                        Type::Fun { ret: Box::new(ret.lift_type()), args: new_args }
+                    },
+                    _ => panic!("ApplyCC type should be a function type")
+                };
+
+
+                Exp::StructLit {
+                    fields: vec![
+                        Field {
+                            param: Param {
+                                ty: cc_fun_type.clone(),
+                                name: Name::new("fun"),
+                            },
+                            exp: Box::new(fun.lambda_lift(fresh_name_generator, decls)),
+                        },
+                        Field {
+                            param: Param {
+                                ty: env_type.lift_type(),
+                                name: Name::new("env"),
+                            },
+                            exp: Box::new(env.lambda_lift(fresh_name_generator, decls)),
+                        },
+                    ]
+                }
+            },
             hircc::Exp::StructLoad { ty, base, field } => {
-                Exp::StructLoad { ty: ty.clone(), base: Box::new(base.lambda_lift(fresh_name_generator, decls)), field: *field }
+                Exp::StructLoad { ty: ty.lift_type(), base: Box::new(base.lambda_lift(fresh_name_generator, decls)), field: *field }
             },
         }
     }
@@ -806,16 +909,16 @@ mod tests {
     use crate::common::names::*;
 
     #[test]
-    fn test_true() {
+    fn test_church_true() {
         let h = Root {
             defs: vec![
                 // var true = \x -> \y -> x
                 Def::VarDef {
-                    ty: Type::Fun { ret: Box::new(Type::I32), args: vec![Type::I32] },
+                    ty: Type::Fun { ret: Box::new(Type::Fun { ret: Box::new(Type::I32), args: vec![Type::I32] }), args: vec![Type::I32] },
                     name: Name::new("true"),
                     exp: Box::new(
                         Exp::Lambda {
-                            ret_type: Type::I32,
+                            ret_type: Type::Fun { ret: Box::new(Type::I32), args: vec![Type::I32] },
                             params: vec![
                                 Param {
                                     name: Name::new("x"), ty: Type::I32
@@ -841,10 +944,47 @@ mod tests {
         let expected = Root {
             defs: vec![
                 Def::VarDef {
-                    ty: Type::Fun {
-                        ret: Box::new(Type::I32),
-                        args: vec![
-                            Type::I32
+                    ty: Type::Struct {
+                        fields: vec![
+                            Param {
+                                ty: Type::Fun {
+                                    ret: Box::new(Type::Struct {
+                                        fields: vec![
+                                            Param {
+                                                ty: Type::Fun {
+                                                    ret: Box::new(Type::I32),
+                                                    args: vec![
+                                                        Type::I32,
+                                                        Type::Struct {
+                                                            fields: vec![]
+                                                        }
+                                                    ]
+                                                },
+                                                name: Name::new("fun")
+                                            },
+                                            Param {
+                                                ty: Type::Struct {
+                                                    fields: vec![]
+                                                },
+                                                name: Name::new("env")
+                                            }
+                                        ]
+                                    }),
+                                    args: vec![
+                                        Type::I32,
+                                        Type::Struct {
+                                            fields: vec![]
+                                        }
+                                    ]
+                                },
+                                name: Name::new("fun")
+                            },
+                            Param {
+                                ty: Type::Struct {
+                                    fields: vec![]
+                                },
+                                name: Name::new("env")
+                            }
                         ]
                     },
                     name: Name::new("true"),
@@ -853,7 +993,28 @@ mod tests {
                             Field {
                                 param: Param {
                                     ty: Type::Fun {
-                                        ret: Box::new(Type::I32),
+                                        ret: Box::new(Type::Struct {
+                                            fields: vec![
+                                                Param {
+                                                    ty: Type::Fun {
+                                                        ret: Box::new(Type::I32),
+                                                        args: vec![
+                                                            Type::I32,
+                                                            Type::Struct {
+                                                                fields: vec![]
+                                                            }
+                                                        ]
+                                                    },
+                                                    name: Name::new("fun")
+                                                },
+                                                Param {
+                                                    ty: Type::Struct {
+                                                        fields: vec![]
+                                                    },
+                                                    name: Name::new("env")
+                                                }
+                                            ]
+                                        }),
                                         args: vec![
                                             Type::I32,
                                             Type::Struct {
@@ -863,10 +1024,31 @@ mod tests {
                                     },
                                     name: Name::new("fun")
                                 },
-                                exp: Box::new(Exp::Var {
+                                exp: Box::new(Exp::Function {
                                     name: Name::new("lifted.cc.2"),
                                     ty: Type::Fun {
-                                        ret: Box::new(Type::I32),
+                                        ret: Box::new(Type::Struct {
+                                            fields: vec![
+                                                Param {
+                                                    ty: Type::Fun {
+                                                        ret: Box::new(Type::I32),
+                                                        args: vec![
+                                                            Type::I32,
+                                                            Type::Struct {
+                                                                fields: vec![]
+                                                            }
+                                                        ]
+                                                    },
+                                                    name: Name::new("fun")
+                                                },
+                                                Param {
+                                                    ty: Type::Struct {
+                                                        fields: vec![]
+                                                    },
+                                                    name: Name::new("env")
+                                                }
+                                            ]
+                                        }),
                                         args: vec![
                                             Type::I32,
                                             Type::Struct {
@@ -967,7 +1149,28 @@ mod tests {
                     })
                 },
                 Def::FunDef {
-                    ret_type: Type::I32,
+                    ret_type: Type::Struct {
+                        fields: vec![
+                            Param {
+                                ty: Type::Fun {
+                                    ret: Box::new(Type::I32),
+                                    args: vec![
+                                        Type::I32,
+                                        Type::Struct {
+                                            fields: vec![]
+                                        }
+                                    ]
+                                },
+                                name: Name::new("fun")
+                            },
+                            Param {
+                                ty: Type::Struct {
+                                    fields: vec![]
+                                },
+                                name: Name::new("env")
+                            },
+                        ]
+                    },
                     name: Name::new("lifted.cc.2"),
                     params: vec![
                         Param {
@@ -1018,7 +1221,7 @@ mod tests {
                                         },
                                         name: Name::new("fun")
                                     },
-                                    exp: Box::new(Exp::Var {
+                                    exp: Box::new(Exp::Function {
                                         name: Name::new("lifted.cc.4"),
                                         ty: Type::Fun {
                                             ret: Box::new(Type::I32),
@@ -1070,16 +1273,16 @@ mod tests {
     }
 
     #[test]
-    fn test_false() {
+    fn test_church_false() {
         let h = Root {
             defs: vec![
                 // var false = \x -> \y -> y
                 Def::VarDef {
-                    ty: Type::Fun { ret: Box::new(Type::I32), args: vec![Type::I32] },
+                    ty: Type::Fun { ret: Box::new(Type::Fun { ret: Box::new(Type::I32), args: vec![Type::I32] }), args: vec![Type::I32] },
                     name: Name::new("false"),
                     exp: Box::new(
                         Exp::Lambda {
-                            ret_type: Type::I32,
+                            ret_type: Type::Fun { ret: Box::new(Type::I32), args: vec![Type::I32] },
                             params: vec![
                                 Param {
                                     name: Name::new("x"), ty: Type::I32
@@ -1105,10 +1308,47 @@ mod tests {
         let expected = Root {
             defs: vec![
                 Def::VarDef {
-                    ty: Type::Fun {
-                        ret: Box::new(Type::I32),
-                        args: vec![
-                            Type::I32
+                    ty: Type::Struct {
+                        fields: vec![
+                            Param {
+                                ty: Type::Fun {
+                                    ret: Box::new(Type::Struct {
+                                        fields: vec![
+                                            Param {
+                                                ty: Type::Fun {
+                                                    ret: Box::new(Type::I32),
+                                                    args: vec![
+                                                        Type::I32,
+                                                        Type::Struct {
+                                                            fields: vec![]
+                                                        }
+                                                    ]
+                                                },
+                                                name: Name::new("fun")
+                                            },
+                                            Param {
+                                                ty: Type::Struct {
+                                                    fields: vec![]
+                                                },
+                                                name: Name::new("env")
+                                            }
+                                        ]
+                                    }),
+                                    args: vec![
+                                        Type::I32,
+                                        Type::Struct {
+                                            fields: vec![]
+                                        }
+                                    ]
+                                },
+                                name: Name::new("fun")
+                            },
+                            Param {
+                                ty: Type::Struct {
+                                    fields: vec![]
+                                },
+                                name: Name::new("env")
+                            }
                         ]
                     },
                     name: Name::new("false"),
@@ -1117,7 +1357,28 @@ mod tests {
                             Field {
                                 param: Param {
                                     ty: Type::Fun {
-                                        ret: Box::new(Type::I32),
+                                        ret: Box::new(Type::Struct {
+                                            fields: vec![
+                                                Param {
+                                                    ty: Type::Fun {
+                                                        ret: Box::new(Type::I32),
+                                                        args: vec![
+                                                            Type::I32,
+                                                            Type::Struct {
+                                                                fields: vec![]
+                                                            }
+                                                        ]
+                                                    },
+                                                    name: Name::new("fun")
+                                                },
+                                                Param {
+                                                    ty: Type::Struct {
+                                                        fields: vec![]
+                                                    },
+                                                    name: Name::new("env")
+                                                }
+                                            ]
+                                        }),
                                         args: vec![
                                             Type::I32,
                                             Type::Struct {
@@ -1127,10 +1388,31 @@ mod tests {
                                     },
                                     name: Name::new("fun")
                                 },
-                                exp: Box::new(Exp::Var {
+                                exp: Box::new(Exp::Function {
                                     name: Name::new("lifted.cc.2"),
                                     ty: Type::Fun {
-                                        ret: Box::new(Type::I32),
+                                        ret: Box::new(Type::Struct {
+                                            fields: vec![
+                                                Param {
+                                                    ty: Type::Fun {
+                                                        ret: Box::new(Type::I32),
+                                                        args: vec![
+                                                            Type::I32,
+                                                            Type::Struct {
+                                                                fields: vec![]
+                                                            }
+                                                        ]
+                                                    },
+                                                    name: Name::new("fun")
+                                                },
+                                                Param {
+                                                    ty: Type::Struct {
+                                                        fields: vec![]
+                                                    },
+                                                    name: Name::new("env")
+                                                }
+                                            ]
+                                        }),
                                         args: vec![
                                             Type::I32,
                                             Type::Struct {
@@ -1203,7 +1485,28 @@ mod tests {
                     })
                 },
                 Def::FunDef {
-                    ret_type: Type::I32,
+                    ret_type: Type::Struct {
+                        fields: vec![
+                            Param {
+                                ty: Type::Fun {
+                                    ret: Box::new(Type::I32),
+                                    args: vec![
+                                        Type::I32,
+                                        Type::Struct {
+                                            fields: vec![]
+                                        }
+                                    ]
+                                },
+                                name: Name::new("fun")
+                            },
+                            Param {
+                                ty: Type::Struct {
+                                    fields: vec![]
+                                },
+                                name: Name::new("env")
+                            },
+                        ]
+                    },
                     name: Name::new("lifted.cc.2"),
                     params: vec![
                         Param {
@@ -1254,7 +1557,7 @@ mod tests {
                                         },
                                         name: Name::new("fun")
                                     },
-                                    exp: Box::new(Exp::Var {
+                                    exp: Box::new(Exp::Function {
                                         name: Name::new("lifted.cc.4"),
                                         ty: Type::Fun {
                                             ret: Box::new(Type::I32),
@@ -1320,6 +1623,28 @@ mod tests {
         let expected = Root {
             defs: vec![
                 Def::VarDef {
+                    ty: Type::Struct {
+                        fields: vec![
+                            Param {
+                                ty: Type::Fun {
+                                    ret: Box::new(Type::I32),
+                                    args: vec![
+                                        Type::I32,
+                                        Type::Struct {
+                                            fields: vec![]
+                                        }
+                                    ]
+                                },
+                                name: Name::new("fun")
+                            },
+                            Param {
+                                ty: Type::Struct {
+                                    fields: vec![]
+                                },
+                                name: Name::new("env")
+                            }
+                        ]
+                    },
                     exp: Box::new(
                         Exp::StructLit {
                             fields: vec![
@@ -1336,7 +1661,7 @@ mod tests {
                                         },
                                         name: Name::new("fun")
                                     },
-                                    exp: Box::new(Exp::Var {
+                                    exp: Box::new(Exp::Function {
                                         name: Name::new("lifted.cc.1"),
                                         ty: Type::Fun {
                                             ret: Box::new(Type::I32),
@@ -1368,7 +1693,6 @@ mod tests {
                             ]
                         }
                     ),
-                    ty: Type::Fun { ret: Box::new(Type::I32), args: vec![Type::I32] },
                     name: Name::new("id"),
                 },
                 Def::FunDef {
@@ -1416,4 +1740,6 @@ mod tests {
         let lifted = LambdaLift::lambda_lift(&h);
         assert_eq!(lifted, expected);
     }
+
+    // TODO: add tests where we CALL the function!
 }

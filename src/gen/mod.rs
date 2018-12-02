@@ -37,7 +37,7 @@ mod tests {
     use crate::common::names::*;
 
     #[test]
-    fn test_fn_returns_0i64() {
+    fn fn_returns_0i64() {
         let h = hir::Root {
             defs: vec![
                 hir::Def::FunDef {
@@ -57,7 +57,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fact_i64() {
+    fn fact_i64() {
         let h = hir::Root {
             defs: vec![
                 hir::Def::FunDef {
@@ -127,7 +127,7 @@ mod tests {
     }
 
     #[test]
-    fn test_identity_i64() {
+    fn identity_i64() {
         let h = hir::Root {
             defs: vec![
                 hir::Def::FunDef {
@@ -145,6 +145,47 @@ mod tests {
 
         let context = llvm::Context::new();
         translate_in_context("test_identity_i64", &h, context);
+        context.dispose();
+    }
+
+    #[test]
+    fn struct_lit_and_load() {
+        let h = hir::Root {
+            defs: vec![
+                hir::Def::FunDef {
+                    ret_type: hir::Type::I64,
+                    name: Name::new("three_from_struct"),
+                    params: vec![],
+                    body: Box::new(
+                        hir::Exp::StructLoad {
+                            ty: hir::Type::Struct {
+                                fields: vec![
+                                    hir::Param {
+                                        ty: hir::Type::I64,
+                                        name: Name::new("f"),
+                                    }
+                                ]
+                            },
+                            base: Box::new(hir::Exp::StructLit {
+                                fields: vec![
+                                    hir::Field {
+                                        param: hir::Param {
+                                            ty: hir::Type::I64,
+                                            name: Name::new("f"),
+                                        },
+                                        exp: Box::new(hir::Exp::Lit { lit: hir::Lit::I64 { value: 3 }}),
+                                    }
+                                ]
+                            }),
+                            field: Name::new("f"),
+                        }
+                    ),
+                }
+            ]
+        };
+
+        let context = llvm::Context::new();
+        translate_in_context("test_struct_load", &h, context);
         context.dispose();
     }
 }
