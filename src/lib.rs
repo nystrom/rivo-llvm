@@ -30,6 +30,7 @@ extern crate quickcheck;
 
 extern crate llvm_sys;
 extern crate libc;
+extern crate immix_rust;
 
 
 

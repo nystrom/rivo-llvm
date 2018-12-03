@@ -51,7 +51,7 @@ mod tests {
             ]
         };
 
-        let context = llvm::Context::new();
+        let context = unsafe { llvm::Context(crate::llvm_sys::core::LLVMGetGlobalContext()) };
         translate_in_context("test_fn_returns_0i64", &h, context);
         context.dispose();
     }
@@ -121,7 +121,7 @@ mod tests {
             ]
         };
 
-        let context = llvm::Context::new();
+        let context = unsafe { llvm::Context(crate::llvm_sys::core::LLVMGetGlobalContext()) };
         translate_in_context("test_fact_i64", &h, context);
         context.dispose();
     }
@@ -143,7 +143,7 @@ mod tests {
             ]
         };
 
-        let context = llvm::Context::new();
+        let context = unsafe { llvm::Context(crate::llvm_sys::core::LLVMGetGlobalContext()) };
         translate_in_context("test_identity_i64", &h, context);
         context.dispose();
     }
@@ -184,7 +184,7 @@ mod tests {
             ]
         };
 
-        let context = llvm::Context::new();
+        let context = unsafe { llvm::Context(crate::llvm_sys::core::LLVMGetGlobalContext()) };
         translate_in_context("test_struct_load", &h, context);
         context.dispose();
     }

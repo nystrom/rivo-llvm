@@ -1,15 +1,3 @@
-use std;
-use std::cell::RefCell;
-use std::rc::Rc;
-
-use std::collections::HashMap;
-use std::collections::HashSet;
-
-use crate::common::names::*;
-use crate::gen;
-use crate::hir::trees as hir;
-use crate::llvm;
-
 // TODO
 // Here we use llvm_sys directly rather than using the wrappers.
 // We'll correct this later.
@@ -19,6 +7,14 @@ use llvm_sys::{core, execution_engine, target, support};
 use std::ffi::CString;
 use std::mem;
 use std::ptr;
+
+use std::collections::HashMap;
+use std::collections::HashSet;
+
+use crate::common::names::*;
+use crate::gen;
+use crate::hir::trees as hir;
+use crate::llvm;
 
 // TODO: add missing intrinsics, better I/O, etc.
 // pub fn init() {
@@ -108,13 +104,88 @@ impl JITManager {
     }
 }
 
+// Memory management hooks.
+mod gc {
+    use immix_rust as immix;
+
+    pub struct Mutator(Box<immix::Mutator>);
+
+    impl Mutator {
+        pub fn new() -> Mutator {
+            Mutator(immix::new_mutator())
+        }
+
+        pub fn alloc(&mut self, size: usize, align: usize) -> immix::common::ObjectReference {
+            if size <= 256 {
+                self.alloc_small(size, align)
+            }
+            else {
+                self.alloc_large(size)
+            }
+        }
+
+        pub fn alloc_small(&mut self, size: usize, align: usize) -> immix::common::ObjectReference {
+            assert!(size <= 256);
+            immix::alloc(&mut self.0, size, align)
+        }
+
+        pub fn alloc_large(&mut self, size: usize) -> immix::common::ObjectReference {
+            immix::alloc_large(&mut self.0, size)
+        }
+
+        pub fn yieldpoint(&mut self) {
+            immix::yieldpoint(&mut self.0)
+        }
+    }
+
+    #[cfg(test)]
+    const HEAP_SIZE: usize = 1024*1024;
+    #[cfg(not(test))]
+    const HEAP_SIZE: usize = 1024*1024*256;
+    const LARGE_OBJECT_SIZE: usize = 1024*1024*256;
+
+    pub fn init() {
+        immix::gc_init(HEAP_SIZE, LARGE_OBJECT_SIZE, 1);
+    }
+
+    use std::cell::RefCell;
+    thread_local! {
+        pub static MUTATOR: RefCell<Option<Mutator>> = RefCell::new(None);
+    }
+}
+
+
 // Memory management hooks for the JIT.
 // Just call libc's malloc.
-pub extern "C" fn malloc(bytes: i64) -> *const c_void {
-    eprintln!("allocating {} bytes", bytes);
+pub extern "C" fn old_malloc(bytes: i64) -> *const c_void {
     unsafe {
         ::libc::malloc(bytes as usize) as *const c_void
     }
+}
+
+pub extern "C" fn malloc(bytes: i64) -> *const c_void {
+    // eprintln!("allocating {} bytes", bytes);
+
+    let oref = gc::MUTATOR.with(|m| {
+        if let Some(s) = m.borrow_mut().as_mut() {
+            s.alloc(bytes as usize, 16)
+        }
+        else {
+            panic!("GC mutator not set for this thread")
+        }
+    });
+
+    // eprintln!("ptr = {:x}", oref.value());
+    oref.value() as *const c_void
+}
+
+pub extern "C" fn yieldpoint() {
+    // eprintln!("yieldpoint");
+    gc::MUTATOR.with(|m| {
+        if let Some(s) = m.borrow_mut().as_mut() {
+            s.yieldpoint()
+        }
+    });
 }
 
 pub extern "C" fn panic() {
@@ -138,19 +209,19 @@ pub fn run_main(name: &str, h: &hir::Root) -> Result<i32, String> {
     //     LLVMAddSymbol(name.as_ptr() as *const c_char, addr);
     // }
 
-    let module = gen::translate_in_context("main", h, context);
+    let module = gen::translate_in_context(name, h, context);
 
     let pm = unsafe { core::LLVMCreatePassManager() };
 
-    unsafe {
-        crate::llvm_sys::transforms::ipo::LLVMAddFunctionInliningPass(pm);
-        crate::llvm_sys::transforms::scalar::LLVMAddBasicAliasAnalysisPass(pm);
-        crate::llvm_sys::transforms::scalar::LLVMAddInstructionCombiningPass(pm);
-        crate::llvm_sys::transforms::scalar::LLVMAddReassociatePass(pm);
-        crate::llvm_sys::transforms::scalar::LLVMAddGVNPass(pm);
-        crate::llvm_sys::transforms::scalar::LLVMAddTailCallEliminationPass(pm);
-        crate::llvm_sys::transforms::scalar::LLVMAddInstructionCombiningPass(pm);
-    }
+    // unsafe {
+    //     crate::llvm_sys::transforms::ipo::LLVMAddFunctionInliningPass(pm);
+    //     crate::llvm_sys::transforms::scalar::LLVMAddBasicAliasAnalysisPass(pm);
+    //     crate::llvm_sys::transforms::scalar::LLVMAddInstructionCombiningPass(pm);
+    //     crate::llvm_sys::transforms::scalar::LLVMAddReassociatePass(pm);
+    //     crate::llvm_sys::transforms::scalar::LLVMAddGVNPass(pm);
+    //     crate::llvm_sys::transforms::scalar::LLVMAddTailCallEliminationPass(pm);
+    //     crate::llvm_sys::transforms::scalar::LLVMAddInstructionCombiningPass(pm);
+    // }
 
     // This breaks the control flow. Dunno why.
     // crate::llvm_sys::transforms::scalar::LLVMAddCFGSimplificationPass(pm);
@@ -175,75 +246,70 @@ pub fn run_main(name: &str, h: &hir::Root) -> Result<i32, String> {
     unsafe {
         support::LLVMAddSymbol(CString::new("malloc").unwrap().as_ptr(), malloc as *mut c_void);
         support::LLVMAddSymbol(CString::new("panic").unwrap().as_ptr(), panic as *mut c_void);
-        // execution_engine::LLVMAddGlobalMapping(ee, module.get_named_function("malloc").0, malloc as *mut c_void);
-        // execution_engine::LLVMAddGlobalMapping(ee, module.get_named_function("panic").0, panic as *mut c_void);
+        support::LLVMAddSymbol(CString::new("yieldpoint").unwrap().as_ptr(), yieldpoint as *mut c_void);
     }
 
-    // Check if malloc works.
-    // {
-    //     let cstr = CString::new("malloc").unwrap();
-    //     let addr = unsafe { execution_engine::LLVMGetFunctionAddress(ee, cstr.as_ptr()) };
-    //     assert_ne!(addr, 0, "address of malloc not found in EE");
-    //     assert_eq!(addr as u64, malloc as u64, "address of malloc not as expected, got {:x}, expected {:x}", addr as u64, malloc as u64);
-    //     eprintln!("malloc linked");
-    //     let f: extern "C" fn(i32) -> u64 = unsafe { mem::transmute(addr) };
-    //     f(8);
-    // }
-
-    // Check if panic works.
-    // {
-    //     let cstr = CString::new("panic").unwrap();
-    //     let addr = unsafe { execution_engine::LLVMGetGlobalValueAddress(ee, cstr.as_ptr()) };
-    //     assert_ne!(addr, 0, "address of panic not found in EE");
-    //     unsafe {
-    //         assert_eq!(addr as u64, malloc as u64, "address of panic not as expected, got {:x}, expected {:x}", addr as u64, panic as u64);
-    //     }
-    //     eprintln!("panic linked");
-    //     let f: extern "C" fn() -> ! = unsafe { mem::transmute(addr) };
-    //     f();
-    // }
-
     // Initialize the module if there's an init_module function.
-    {
+    let init = {
         let cstr = CString::new("init_module").unwrap();
         let addr = unsafe { execution_engine::LLVMGetFunctionAddress(ee, cstr.as_ptr()) };
 
         if addr != 0 {
-            let f: extern "C" fn() -> i32 = unsafe { mem::transmute(addr) };
-            f();
+            let f: extern "C" fn() -> c_void = unsafe { mem::transmute(addr) };
+            Some(f)
         }
+        else {
+            None
+        }
+    };
+
+    let main = {
+        let cstr = CString::new(name).unwrap();
+        let addr = unsafe { execution_engine::LLVMGetFunctionAddress(ee, cstr.as_ptr()) };
+
+        if addr == 0 {
+            return Err("main not found".to_string());
+        }
+
+        let f: extern "C" fn() -> i32 = unsafe { mem::transmute(addr) };
+
+        f
+    };
+
+    use self::gc;
+    use immix_rust as immix;
+
+    // Run the module initializer and main.
+    // Put in another function so we can set the low water mark for the GC.
+    fn init_and_run(init: Option<extern "C" fn() -> c_void>, main: extern "C" fn() -> i32) -> i32 {
+        unsafe {
+            immix::set_low_water_mark();
+        }
+
+        match init {
+            Some(f) => { f(); },
+            None => {},
+        }
+
+        main()
     }
 
-    let cstr = CString::new(name).unwrap();
-    let addr = unsafe { execution_engine::LLVMGetFunctionAddress(ee, cstr.as_ptr()) };
+    // Initialize the GC (but only once).
+    gc::MUTATOR.with(|m| {
+        let mut r = m.borrow_mut();
+        if let None = *r {
+            gc::init();
+            *r = Some(gc::Mutator::new());
+        }
+    });
 
-    if addr == 0 {
-        return Err("main not found".to_string());
-    }
+    let res = init_and_run(init, main);
 
-    let f: extern "C" fn() -> i32 = unsafe { mem::transmute(addr) };
-
-    // TODO: initialize the heap as an arena.
-    // Add hooks for allocation and GC of the heap.
-    // Simplest thing is to use BDW collector and just tell it to run within
-    // this arena with the stack bottom here.
-    // For concurrency, we should support spawning threads and tracing those stacks too.
-
-    // Or: can we integrate with Rust's memory management from the generated code?
-    // For instance, all Box are translated to Rc<Box> or Arc<Box>.
-    // Add explicit calls to clone and drop (inlined) to increment/decrement the ref count.
-
-    // We can use Gc refs too, writing a custom Trace implementation for Box, allocating
-    // in an arena of Box and writing a custom Trace implementation for the stack
-    // using generated stack maps.
-
-    let res = f();
-
-    // We're done. Dispose of the EE and the context.
-    // Don't dispose of the module. The EE owns it!
     unsafe {
         execution_engine::LLVMDisposeExecutionEngine(ee);
     }
+
+    yieldpoint();
 
     // context.dispose();
 
@@ -335,7 +401,7 @@ mod tests {
                         lit: hir::Lit::I64 { value: 0 },
                     }),
                 },
-                // main = (i32) fact(10)
+                // main = (i32) zero()
                 hir::Def::FunDef {
                     ret_type: hir::Type::I32,
                     name: Name::new("main"),
@@ -357,6 +423,195 @@ mod tests {
 
         let r = run_main("main", &h);
         assert_eq!(r, Ok(0));
+    }
+
+    #[test]
+    fn while_loop() {
+        let h = hir::Root {
+            defs: vec![
+                hir::Def::FunDef {
+                    ret_type: hir::Type::I32,
+                    name: Name::new("loop"),
+                    params: vec![],
+                    body: Box::new(hir::Exp::Seq {
+                        body: Box::new(
+                            hir::Stm::Block {
+                                body: vec![
+                                    hir::Stm::Assign {
+                                        ty: hir::Type::I32,
+                                        lhs: Name::new("i"),
+                                        rhs: Box::new(hir::Exp::Lit {
+                                            lit: hir::Lit::I32 { value: 0 },
+                                        }),
+                                    },
+                                    hir::Stm::While {
+                                        cond: Box::new(hir::Exp::Binary {
+                                                op: Bop::Lt_u_i32,
+                                                e1: Box::new(hir::Exp::Var {
+                                                    name: Name::new("i"),
+                                                    ty: hir::Type::I32,
+                                                }),
+                                                e2: Box::new(hir::Exp::Lit { lit: hir::Lit::I32 { value: 1000000 }, }),
+                                            }
+                                        ),
+                                        body: Box::new(
+                                            hir::Stm::Assign {
+                                                ty: hir::Type::I32,
+                                                lhs: Name::new("i"),
+                                                rhs: Box::new(hir::Exp::Binary {
+                                                        op: Bop::Add_i32,
+                                                        e1: Box::new(hir::Exp::Var {
+                                                            name: Name::new("i"),
+                                                            ty: hir::Type::I32,
+                                                        }),
+                                                        e2: Box::new(hir::Exp::Lit { lit: hir::Lit::I32 { value: 1 }, }),
+                                                    }
+                                                ),
+                                            }
+                                        ),
+                                    }
+                                ]
+                            }
+                        ),
+                        exp: Box::new(hir::Exp::Var {
+                            name: Name::new("i"),
+                            ty: hir::Type::I32,
+                        }),
+                    }),
+                },
+                // main = loop()
+                hir::Def::FunDef {
+                    ret_type: hir::Type::I32,
+                    name: Name::new("main"),
+                    params: vec![],
+                    body: Box::new(hir::Exp::Call {
+                        fun_type: hir::Type::Fun {
+                            ret: Box::new(hir::Type::I32),
+                            args: vec![],
+                        },
+                        name: Name::new("loop"),
+                        args: vec![],
+                    }),
+                },
+            ],
+        };
+
+        let r = run_main("main", &h);
+        assert_eq!(r, Ok(1000000));
+    }
+
+    #[test]
+    fn alloc_in_loop() {
+        let h = hir::Root {
+            defs: vec![
+                hir::Def::FunDef {
+                    ret_type: hir::Type::I32,
+                    name: Name::new("loop"),
+                    params: vec![],
+                    body: Box::new(hir::Exp::Seq {
+                        body: Box::new(
+                            hir::Stm::Block {
+                                body: vec![
+                                    hir::Stm::Assign {
+                                        ty: hir::Type::I32,
+                                        lhs: Name::new("i"),
+                                        rhs: Box::new(hir::Exp::Lit {
+                                            lit: hir::Lit::I32 { value: 0 },
+                                        }),
+                                    },
+                                    hir::Stm::While {
+                                        cond: Box::new(hir::Exp::Binary {
+                                                op: Bop::Lt_u_i32,
+                                                e1: Box::new(hir::Exp::Var {
+                                                    name: Name::new("i"),
+                                                    ty: hir::Type::I32,
+                                                }),
+                                                e2: Box::new(hir::Exp::Lit { lit: hir::Lit::I32 { value: 1000000 }, }),
+                                            }
+                                        ),
+                                        body: Box::new(
+                                            hir::Stm::Assign {
+                                                ty: hir::Type::I32,
+                                                lhs: Name::new("i"),
+                                                rhs: Box::new(hir::Exp::Binary {
+                                                        op: Bop::Add_i32,
+                                                        e1: Box::new(hir::Exp::Var {
+                                                            name: Name::new("i"),
+                                                            ty: hir::Type::I32,
+                                                        }),
+                                                        e2: Box::new(hir::Exp::Call {
+                                                            fun_type: hir::Type::Fun {
+                                                                ret: Box::new(hir::Type::I32),
+                                                                args: vec![],
+                                                            },
+                                                            name: Name::new("one"),
+                                                            args: vec![],
+                                                        }),
+                                                    }
+                                                ),
+                                            }
+                                        ),
+                                    }
+                                ]
+                            }
+                        ),
+                        exp: Box::new(hir::Exp::Var {
+                            name: Name::new("i"),
+                            ty: hir::Type::I32,
+                        }),
+                    }),
+                },
+                // returns 1, but allocating a struct.
+                // { f: 1 }.f
+                hir::Def::FunDef {
+                    ret_type: hir::Type::I32,
+                    name: Name::new("one"),
+                    params: vec![],
+                    body: Box::new(
+                        hir::Exp::StructLoad {
+                            ty: hir::Type::Struct {
+                                fields: vec![
+                                    hir::Param {
+                                        ty: hir::Type::I32,
+                                        name: Name::new("f"),
+                                    }
+                                ]
+                            },
+                            base: Box::new(hir::Exp::StructLit {
+                                fields: vec![
+                                    hir::Field {
+                                        param: hir::Param {
+                                            ty: hir::Type::I32,
+                                            name: Name::new("f"),
+                                        },
+                                        exp: Box::new(hir::Exp::Lit { lit: hir::Lit::I32 { value: 1 }}),
+                                    }
+                                ]
+                            }),
+                            field: Name::new("f"),
+                        }
+                    ),
+                },
+
+                // main = loop()
+                hir::Def::FunDef {
+                    ret_type: hir::Type::I32,
+                    name: Name::new("main"),
+                    params: vec![],
+                    body: Box::new(hir::Exp::Call {
+                        fun_type: hir::Type::Fun {
+                            ret: Box::new(hir::Type::I32),
+                            args: vec![],
+                        },
+                        name: Name::new("loop"),
+                        args: vec![],
+                    }),
+                },
+            ],
+        };
+
+        let r = run_main("main", &h);
+        assert_eq!(r, Ok(1000000));
     }
 
     #[test]

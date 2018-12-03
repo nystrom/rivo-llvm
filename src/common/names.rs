@@ -14,7 +14,7 @@ lazy_static! {
 pub struct Interned(Sym);
 
 impl ToString for Interned {
-    /// panics if not a valid symbol
+    // panics if not a valid symbol
     #[inline]
     fn to_string(&self) -> String {
         // lookup in the table

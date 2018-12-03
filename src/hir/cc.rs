@@ -1,5 +1,5 @@
-/// Closure conversion for HIR
-/// We translate into HIR/CC, then lambda lift, producing HIR again (but without lambdas).
+// Closure conversion for HIR
+// We translate into HIR/CC, then lambda lift, producing HIR again (but without lambdas).
 
 use std::collections::HashMap;
 use std::collections::HashSet;

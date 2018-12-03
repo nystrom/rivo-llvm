@@ -8,6 +8,7 @@ license = "BSD-3"
 readme = "README.md"
 repository = "https://github.com/nystrom/rivo-llvm.git"
 homepage = "https://github.com/nystrom/rivo-llvm"
+# build = "build.rs"
 
 [profile.release]
 opt-level = 3
@@ -25,6 +26,8 @@ string-interner = "0.7.0"
 llvm-sys = "*"
 libc = "*"
 
+immix_rust = { path = "/Users/nystrom/Dropbox/work/immix-rust" }
+
 [patch.crates-io]
 trace = { git = "https://github.com/nystrom/trace.git" }
 quickcheck = { git = "https://github.com/nystrom/quickcheck.git" }
@@ -34,3 +37,6 @@ quickcheck_macros = { git = "https://github.com/nystrom/quickcheck.git" }
 pretty_assertions = "*"
 quickcheck = "*"
 quickcheck_macros = "*"
+
+# [build-dependencies]
+# bindgen = "*"

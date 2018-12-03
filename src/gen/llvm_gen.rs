@@ -76,6 +76,7 @@ impl Translate {
         let byte_ptr = self.context.pointer_type(self.context.i8_type());
 
         module.add_function("panic", llvm::Type::function(llvm::Type::void(), &[], false));
+        module.add_function("yieldpoint", llvm::Type::function(llvm::Type::void(), &[], false));
         module.add_function("malloc", llvm::Type::function(byte_ptr, &[self.context.i64_type()], false));
         module.add_function("box_i32", llvm::Type::function(byte_ptr, &[self.context.i32_type()], false));
         module.add_function("box_i64", llvm::Type::function(byte_ptr, &[self.context.i64_type()], false));
@@ -725,7 +726,7 @@ impl<'a> BodyTranslator<'a> {
                     // let b = self.builder.get_struct_element_pointer(a, 1, &self.fresh_name());
                     // Get the pointer to the array element.
                     // let v = self.builder.get_in_bounds_element_pointer(b, &[i], &self.fresh_name());
-                // Get the pointer to the array element, indexing by 1 to get the base of the array 
+                // Get the pointer to the array element, indexing by 1 to get the base of the array
                 // and then by i to get the element.
                 let base = llvm::Value::i32(1); // struct fields are i32
                 let v = self.builder.get_in_bounds_element_pointer(a, &[base, i], &self.fresh_name());
