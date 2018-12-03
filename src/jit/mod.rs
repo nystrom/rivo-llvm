@@ -46,17 +46,11 @@ impl JITManager {
 
         unsafe {
             crate::llvm_sys::transforms::ipo::LLVMAddFunctionInliningPass(pm);
-        }
-        unsafe {
+            crate::llvm_sys::transforms::scalar::LLVMAddBasicAliasAnalysisPass(pm);
             crate::llvm_sys::transforms::scalar::LLVMAddInstructionCombiningPass(pm);
-        }
-        unsafe {
+            crate::llvm_sys::transforms::scalar::LLVMAddReassociatePass(pm);
             crate::llvm_sys::transforms::scalar::LLVMAddGVNPass(pm);
-        }
-        unsafe {
             crate::llvm_sys::transforms::scalar::LLVMAddTailCallEliminationPass(pm);
-        }
-        unsafe {
             crate::llvm_sys::transforms::scalar::LLVMAddInstructionCombiningPass(pm);
         }
 
