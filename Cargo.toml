@@ -26,7 +26,7 @@ string-interner = "0.7.0"
 llvm-sys = "*"
 libc = "*"
 
-immix_rust = { path = "/Users/nystrom/Dropbox/work/immix-rust" }
+immix_rust = { git = "https://github.com/nystrom/immix-rust.git" }
 
 [patch.crates-io]
 trace = { git = "https://github.com/nystrom/trace.git" }
