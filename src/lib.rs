@@ -32,13 +32,29 @@ extern crate llvm_sys;
 extern crate libc;
 extern crate immix_rust;
 
+#[macro_use]
+pub mod macros {
+    macro_rules! unsafe_llvm {
+        ($e: expr) => {
+            {
+                let mut guard = crate::llvm::wrappers::LLVM_LOCK.lock().unwrap();
+                println!("locked");
+                let v = unsafe {
+                    $e
+                };
+                println!("unlocked");
+                *guard = ();
+                v
+            }
+        };
+    }
+}
 
-
-
-pub mod hir;
-pub mod mir;
-pub mod lir;
-pub mod llvm;
-pub mod gen;
 pub mod common;
+pub mod llvm;
+pub mod lir;
+pub mod mir;
+pub mod hir;
+pub mod funky;
+pub mod gen;
 pub mod jit;

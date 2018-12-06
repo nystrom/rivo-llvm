@@ -5,23 +5,23 @@ use llvm_sys as llvm;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
 
+use crate::macros::*;
+
 pub mod wrappers;
 pub use self::wrappers::*;
 
 static INIT_FAILED: AtomicBool = AtomicBool::new(false);
 static INIT: Once = Once::new();
 
-macro_rules! c_str {
-    ($s:expr) => (
-        concat!($s, "\0").as_ptr() as *const i8
-    );
-}
-
+// Intialize the LLVM library.
+// It's very important that this be called before any other LLVM functions.
+// All the wrapper methods call here.
 pub fn init() {
     INIT.call_once(|| {
-        unsafe {
+        unsafe_llvm!({
             if llvm::core::LLVMStartMultithreaded() != 1 {
                 INIT_FAILED.store(true, Ordering::SeqCst);
+                panic!("Couldn't enable multi-threaded x86 LLVM with MCJIT");
             }
 
             llvm::target::LLVMInitializeX86TargetInfo();
@@ -29,16 +29,20 @@ pub fn init() {
             llvm::target::LLVMInitializeX86TargetMC();
             llvm::target::LLVMInitializeX86AsmPrinter();
             llvm::target::LLVMInitializeX86AsmParser();
-            
-            llvm::execution_engine::LLVMLinkInMCJIT();
-        }
 
-        println!("LLVM initialized!");
+            llvm::execution_engine::LLVMLinkInMCJIT();
+        });
+
+        println!("{:?}: LLVM initialized!", std::thread::current().name());
     });
 
     if INIT_FAILED.load(Ordering::SeqCst) {
         panic!("Couldn't enable multi-threaded x86 LLVM with MCJIT");
     }
+
+    assert_eq!(unsafe { llvm::core::LLVMIsMultithreaded() }, 1);
+
+    println!("{:?}: LLVM (re)initialized!", std::thread::current().name());
 }
 
 #[cfg(test)]

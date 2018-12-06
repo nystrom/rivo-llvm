@@ -1,9 +1,9 @@
 [package]
-name = "rivo-llvm"
+name = "rivo_llvm"
 version = "0.1.0"
-authors = ["Nate Nystrom <nate.nystrom@usi.ch>"]
+authors = ["Nate Nystrom <nate.nystrom@gmail.com>"]
 edition = "2018"
-description = "LLVM backend for Ivo."
+description = "LLVM backend for Ivo"
 license = "BSD-3"
 readme = "README.md"
 repository = "https://github.com/nystrom/rivo-llvm.git"
@@ -40,3 +40,13 @@ quickcheck_macros = "*"
 
 # [build-dependencies]
 # bindgen = "*"
+
+[features]
+immix = []
+yieldpoints = ["immix"]
+default = ["fast"]
+malloc = []
+optimize = []
+fast = ["immix", "optimize"]
+
+

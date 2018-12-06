@@ -8,7 +8,6 @@ pub trait Typed {
 impl Typed for Stm {
     fn get_type(&self) -> Type {
         // Check the types.
-        println!("checking stm {:#?}", self);
         match self {
             Stm::Nop => {},
             Stm::CJump { cond, if_true, if_false } => {},
@@ -23,7 +22,6 @@ impl Typed for Stm {
                 // ptr should have type Ptr { ty }
                 let vty = value.get_type();
                 let pty = ptr.get_type();
-                println!("checking stm {:#?}", self);
                 assert_eq!(ty, &vty);
                 assert_eq!(Type::Ptr { ty: Box::new(ty.clone()) }, pty);
             },
@@ -38,7 +36,6 @@ impl Typed for Stm {
 // Also asserts that the types are consistent.
 impl Typed for Exp {
     fn get_type(&self) -> Type {
-        println!("checking exp {:#?}", self);
         let ty = match self {
             Exp::Block { body, exp } => {
                 for s in body {

@@ -1,3 +1,5 @@
+use crate::macros::*;
+
 // TODO
 // Here we use llvm_sys directly rather than using the wrappers.
 // We'll correct this later.
@@ -29,7 +31,7 @@ use crate::llvm;
 
 pub struct JITManager {
     context: llvm::Context,
-    pm: crate::llvm_sys::prelude::LLVMPassManagerRef,
+    pm: llvm_sys::prelude::LLVMPassManagerRef,
     roots: Vec<hir::Root>,
     execution_engines: Vec<execution_engine::LLVMExecutionEngineRef>,
 }
@@ -38,17 +40,17 @@ impl JITManager {
     pub fn new() -> JITManager {
         llvm::init();
 
-        let pm = unsafe { core::LLVMCreatePassManager() };
+        let pm = unsafe_llvm!( core::LLVMCreatePassManager() );
 
-        unsafe {
-            crate::llvm_sys::transforms::ipo::LLVMAddFunctionInliningPass(pm);
-            crate::llvm_sys::transforms::scalar::LLVMAddBasicAliasAnalysisPass(pm);
-            crate::llvm_sys::transforms::scalar::LLVMAddInstructionCombiningPass(pm);
-            crate::llvm_sys::transforms::scalar::LLVMAddReassociatePass(pm);
-            crate::llvm_sys::transforms::scalar::LLVMAddGVNPass(pm);
-            crate::llvm_sys::transforms::scalar::LLVMAddTailCallEliminationPass(pm);
-            crate::llvm_sys::transforms::scalar::LLVMAddInstructionCombiningPass(pm);
-        }
+        unsafe_llvm!( {
+            llvm_sys::transforms::ipo::LLVMAddFunctionInliningPass(pm);
+            llvm_sys::transforms::scalar::LLVMAddBasicAliasAnalysisPass(pm);
+            llvm_sys::transforms::scalar::LLVMAddInstructionCombiningPass(pm);
+            llvm_sys::transforms::scalar::LLVMAddReassociatePass(pm);
+            llvm_sys::transforms::scalar::LLVMAddGVNPass(pm);
+            llvm_sys::transforms::scalar::LLVMAddTailCallEliminationPass(pm);
+            llvm_sys::transforms::scalar::LLVMAddInstructionCombiningPass(pm);
+        });
 
         JITManager {
             context: llvm::Context::new(),
@@ -65,16 +67,14 @@ impl JITManager {
 
         // self.modules.push(module);
 
-        unsafe {
-            core::LLVMRunPassManager(self.pm, module.0);
-        }
+        unsafe_llvm!(
+            core::LLVMRunPassManager(self.pm, module.0)
+        );
 
         let mut ee = unsafe { mem::zeroed() };
         let mut out = unsafe { mem::zeroed() };
 
-        unsafe {
-            execution_engine::LLVMCreateExecutionEngineForModule(&mut ee, module.0, &mut out);
-        }
+        unsafe_llvm!( execution_engine::LLVMCreateExecutionEngineForModule(&mut ee, module.0, &mut out) );
 
         self.execution_engines.push(ee);
     }
@@ -83,7 +83,7 @@ impl JITManager {
         let cstr = CString::new(name).unwrap();
 
         for ee in &self.execution_engines {
-            let addr = unsafe { execution_engine::LLVMGetFunctionAddress(*ee, cstr.as_ptr()) };
+            let addr = unsafe_llvm!( execution_engine::LLVMGetFunctionAddress(*ee, cstr.as_ptr()) );
 
             if addr != 0 {
                 let f: extern "C" fn() -> i32 = unsafe { mem::transmute(addr) };
@@ -105,8 +105,30 @@ impl JITManager {
 }
 
 // Memory management hooks.
+#[cfg(not(feature = "immix"))]
+mod gc {
+    use ::libc::c_void;
+
+    pub fn init() { }
+
+    // Just call libc's malloc.
+    pub extern "C" fn malloc(bytes: i64) -> *const c_void {
+        eprintln!("old_malloc: allocating {} bytes", bytes);
+        unsafe {
+            ::libc::malloc(bytes as usize) as *const c_void
+        }
+    }
+
+    pub extern "C" fn yieldpoint() { }
+}
+
+#[cfg(feature = "immix")]
 mod gc {
     use immix_rust as immix;
+    use ::libc::c_void;
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
 
     pub struct Mutator(Box<immix::Mutator>);
 
@@ -139,53 +161,57 @@ mod gc {
     }
 
     #[cfg(test)]
-    const HEAP_SIZE: usize = 1024*1024;
+    const HEAP_SIZE: usize = 1024*256;
     #[cfg(not(test))]
     const HEAP_SIZE: usize = 1024*1024*256;
     const LARGE_OBJECT_SIZE: usize = 1024*1024*256;
 
     pub fn init() {
-        immix::gc_init(HEAP_SIZE, LARGE_OBJECT_SIZE, 1);
+        INIT.call_once(|| {
+            immix::gc_init(HEAP_SIZE, LARGE_OBJECT_SIZE, 1);
+            println!("Immix initialized!");
+        });
+
+        self::MUTATOR.with(|m| {
+            let mut r = m.borrow_mut();
+            if let None = *r {
+                *r = Some(self::Mutator::new());
+                println!("Mutator initialized!");
+            }
+        });
     }
 
+    pub extern "C" fn malloc(bytes: i64) -> *const c_void {
+        eprintln!("malloc: allocating {} bytes", bytes);
+
+        let oref = self::MUTATOR.with(|m| {
+            if let Some(s) = m.borrow_mut().as_mut() {
+                s.alloc(bytes as usize, 16)
+            }
+            else {
+                panic!("GC mutator not set for this thread")
+            }
+        });
+
+        // eprintln!("ptr = {:x}", oref.value());
+        oref.value() as *const c_void
+    }
+
+    pub extern "C" fn yieldpoint() {
+        // eprintln!("yieldpoint");
+        self::MUTATOR.with(|m| {
+            if let Some(s) = m.borrow_mut().as_mut() {
+                s.yieldpoint()
+            }
+        });
+    }
+
+
+    // Create a thread-local cell for the mutator.
     use std::cell::RefCell;
     thread_local! {
         pub static MUTATOR: RefCell<Option<Mutator>> = RefCell::new(None);
     }
-}
-
-
-// Memory management hooks for the JIT.
-// Just call libc's malloc.
-pub extern "C" fn old_malloc(bytes: i64) -> *const c_void {
-    unsafe {
-        ::libc::malloc(bytes as usize) as *const c_void
-    }
-}
-
-pub extern "C" fn malloc(bytes: i64) -> *const c_void {
-    // eprintln!("allocating {} bytes", bytes);
-
-    let oref = gc::MUTATOR.with(|m| {
-        if let Some(s) = m.borrow_mut().as_mut() {
-            s.alloc(bytes as usize, 16)
-        }
-        else {
-            panic!("GC mutator not set for this thread")
-        }
-    });
-
-    // eprintln!("ptr = {:x}", oref.value());
-    oref.value() as *const c_void
-}
-
-pub extern "C" fn yieldpoint() {
-    // eprintln!("yieldpoint");
-    gc::MUTATOR.with(|m| {
-        if let Some(s) = m.borrow_mut().as_mut() {
-            s.yieldpoint()
-        }
-    });
 }
 
 pub extern "C" fn panic() {
@@ -197,10 +223,8 @@ extern "C" {
 }
 
 pub fn run_main(name: &str, h: &hir::Root) -> Result<i32, String> {
-    llvm::init();
-
-    let context = unsafe { llvm::Context(core::LLVMGetGlobalContext()) };
-    // let context = llvm::Context::new();
+    // let context = llvm::Context::global();
+    let context = llvm::Context::new();
 
     // // Add the runtime functions.
     // unsafe {
@@ -209,26 +233,30 @@ pub fn run_main(name: &str, h: &hir::Root) -> Result<i32, String> {
     //     LLVMAddSymbol(name.as_ptr() as *const c_char, addr);
     // }
 
+    eprintln!("{}: about to translate", name);
     let module = gen::translate_in_context(name, h, context);
+    eprintln!("{}: translated", name);
 
-    let pm = unsafe { core::LLVMCreatePassManager() };
+    if cfg!(feature = "optimize") {
+        unsafe_llvm!( {
+            let pm = core::LLVMCreatePassManager();
 
-    // unsafe {
-    //     crate::llvm_sys::transforms::ipo::LLVMAddFunctionInliningPass(pm);
-    //     crate::llvm_sys::transforms::scalar::LLVMAddBasicAliasAnalysisPass(pm);
-    //     crate::llvm_sys::transforms::scalar::LLVMAddInstructionCombiningPass(pm);
-    //     crate::llvm_sys::transforms::scalar::LLVMAddReassociatePass(pm);
-    //     crate::llvm_sys::transforms::scalar::LLVMAddGVNPass(pm);
-    //     crate::llvm_sys::transforms::scalar::LLVMAddTailCallEliminationPass(pm);
-    //     crate::llvm_sys::transforms::scalar::LLVMAddInstructionCombiningPass(pm);
-    // }
+            llvm_sys::transforms::ipo::LLVMAddFunctionInliningPass(pm);
+            llvm_sys::transforms::scalar::LLVMAddBasicAliasAnalysisPass(pm);
+            llvm_sys::transforms::scalar::LLVMAddInstructionCombiningPass(pm);
+            llvm_sys::transforms::scalar::LLVMAddReassociatePass(pm);
+            llvm_sys::transforms::scalar::LLVMAddGVNPass(pm);
+            llvm_sys::transforms::scalar::LLVMAddTailCallEliminationPass(pm);
+            llvm_sys::transforms::scalar::LLVMAddInstructionCombiningPass(pm);
 
-    // This breaks the control flow. Dunno why.
-    // crate::llvm_sys::transforms::scalar::LLVMAddCFGSimplificationPass(pm);
+            // This breaks the control flow. Dunno why.
+            // llvm_sys::transforms::scalar::LLVMAddCFGSimplificationPass(pm);
 
-    unsafe {
-        core::LLVMRunPassManager(pm, module.0);
-        core::LLVMDisposePassManager(pm);
+            core::LLVMRunPassManager(pm, module.0);
+            core::LLVMDisposePassManager(pm);
+        });
+
+        eprintln!("{}: optimized", name);
     }
 
     module.dump();
@@ -237,22 +265,19 @@ pub fn run_main(name: &str, h: &hir::Root) -> Result<i32, String> {
     let mut out = unsafe { mem::zeroed() };
 
     // hand off the module to the EE.
-    unsafe {
-        execution_engine::LLVMCreateExecutionEngineForModule(&mut ee, module.0, &mut out);
-        // target::LLVMSetModuleDataLayout(module.0, execution_engine::LLVMGetExecutionEngineTargetData(ee));
-    }
+    unsafe_llvm!( execution_engine::LLVMCreateExecutionEngineForModule(&mut ee, module.0, &mut out) );
 
     // Register the runtime functions.
-    unsafe {
-        support::LLVMAddSymbol(CString::new("malloc").unwrap().as_ptr(), malloc as *mut c_void);
+    unsafe_llvm!({
         support::LLVMAddSymbol(CString::new("panic").unwrap().as_ptr(), panic as *mut c_void);
-        support::LLVMAddSymbol(CString::new("yieldpoint").unwrap().as_ptr(), yieldpoint as *mut c_void);
-    }
+        support::LLVMAddSymbol(CString::new("malloc").unwrap().as_ptr(), gc::malloc as *mut c_void);
+        support::LLVMAddSymbol(CString::new("yieldpoint").unwrap().as_ptr(), gc::yieldpoint as *mut c_void);
+    });
 
     // Initialize the module if there's an init_module function.
     let init = {
         let cstr = CString::new("init_module").unwrap();
-        let addr = unsafe { execution_engine::LLVMGetFunctionAddress(ee, cstr.as_ptr()) };
+        let addr = unsafe_llvm!( execution_engine::LLVMGetFunctionAddress(ee, cstr.as_ptr()) );
 
         if addr != 0 {
             let f: extern "C" fn() -> c_void = unsafe { mem::transmute(addr) };
@@ -265,25 +290,27 @@ pub fn run_main(name: &str, h: &hir::Root) -> Result<i32, String> {
 
     let main = {
         let cstr = CString::new(name).unwrap();
-        let addr = unsafe { execution_engine::LLVMGetFunctionAddress(ee, cstr.as_ptr()) };
+        let addr = unsafe_llvm!( execution_engine::LLVMGetFunctionAddress(ee, cstr.as_ptr()) );
 
         if addr == 0 {
             return Err("main not found".to_string());
         }
 
         let f: extern "C" fn() -> i32 = unsafe { mem::transmute(addr) };
-
         f
     };
 
     use self::gc;
-    use immix_rust as immix;
 
     // Run the module initializer and main.
     // Put in another function so we can set the low water mark for the GC.
     fn init_and_run(init: Option<extern "C" fn() -> c_void>, main: extern "C" fn() -> i32) -> i32 {
-        unsafe {
-            immix::set_low_water_mark();
+        use immix_rust as immix;
+
+        if cfg!(feature = "immix") {
+            unsafe {
+                immix::set_low_water_mark();
+            }
         }
 
         match init {
@@ -294,24 +321,18 @@ pub fn run_main(name: &str, h: &hir::Root) -> Result<i32, String> {
         main()
     }
 
-    // Initialize the GC (but only once).
-    gc::MUTATOR.with(|m| {
-        let mut r = m.borrow_mut();
-        if let None = *r {
-            gc::init();
-            *r = Some(gc::Mutator::new());
-        }
-    });
+    eprintln!("{}: about to init gc", name);
+    gc::init();
+    eprintln!("{}: about to run", name);
 
     let res = init_and_run(init, main);
+    eprintln!("{}: finished run", name);
 
-    unsafe {
-        execution_engine::LLVMDisposeExecutionEngine(ee);
-    }
+    gc::yieldpoint();
 
-    yieldpoint();
+    unsafe_llvm!( execution_engine::LLVMDisposeExecutionEngine(ee) );
 
-    // context.dispose();
+    context.dispose();
 
     Ok(res)
 }
@@ -323,6 +344,15 @@ mod tests {
     use crate::gen::*;
     use crate::hir::ops::*;
     use crate::hir::trees as hir;
+
+    // #[test]
+    // fn print_env() {
+    //     use std::env;
+    //
+    //     for (key, value) in env::vars() {
+    //         println!("{}='{}'", key, value);
+    //     }
+    // }
 
     #[test]
     #[should_panic]

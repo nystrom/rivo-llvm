@@ -236,36 +236,47 @@ impl ProcTranslator {
         ).collect();
 
         // Add a yieldpoint to the beginning of the function to trigger a GC.
-        let yieldpoint = mir::Exp::Call {
-            fun_type: mir::Type::Fun { ret: Box::new(mir::Type::Void), args: vec![] },
-            fun: Box::new(
-                mir::Exp::FunctionAddr {
-                    name: Name::new("yieldpoint"),
-                    ty: mir::Type::Ptr {
-                        ty: Box::new(mir::Type::Fun { ret: Box::new(mir::Type::Void), args: vec![] })
-                    },
-                }
-            ),
-            args: vec![]
-        };
+        if cfg!(feature = "yieldpoint") {
+            let yieldpoint = mir::Exp::Call {
+                fun_type: mir::Type::Fun { ret: Box::new(mir::Type::Void), args: vec![] },
+                fun: Box::new(
+                    mir::Exp::FunctionAddr {
+                        name: Name::new("yieldpoint"),
+                        ty: mir::Type::Ptr {
+                            ty: Box::new(mir::Type::Fun { ret: Box::new(mir::Type::Void), args: vec![] })
+                        },
+                    }
+                ),
+                args: vec![]
+            };
 
-        let body_with_yield = mir::Exp::Block {
-            body: vec![
+            let body_with_yield = mir::Exp::Block {
+                body: vec![
                 mir::Stm::Move {
                     ty: mir::Type::Void,
                     lhs: Name::fresh("yield"),
                     rhs: Box::new(yieldpoint)
                 }
-            ],
-            exp: Box::new(mir_body)
-        };
+                ],
+                exp: Box::new(mir_body)
+            };
 
-        mir::Proc {
-            ret_type: mir_ty,
-            name,
-            params: mir_params,
-            body: Box::new(body_with_yield)
+            mir::Proc {
+                ret_type: mir_ty,
+                name,
+                params: mir_params,
+                body: Box::new(body_with_yield)
+            }
         }
+        else {
+            mir::Proc {
+                ret_type: mir_ty,
+                name,
+                params: mir_params,
+                body: Box::new(mir_body)
+            }
+        }
+
     }
 
     fn get_field_index(struct_ty: &hir::Type, field: Name) -> (usize, hir::Type) {
