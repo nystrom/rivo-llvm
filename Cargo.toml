@@ -23,30 +23,35 @@ trace = "*"
 lazy_static = "*"
 string-interner = "0.7.0"
 
+# serialization
+serde = "*"
+serde_derive = "*"
+serde_json = "*"
+json5 = "*"
+rmp-serde = "*"
+
+# argument parsing
+clap = "*"
+
+# for LLVM and invoking the JIT
 llvm-sys = "*"
+llvm-alt = "*"
 libc = "*"
 
-immix_rust = { git = "https://github.com/nystrom/immix-rust.git" }
+immix_rust = { git = "https://github.com/nystrom/immix-rust.git", features = ["mt-trace"] }
 
 [patch.crates-io]
 trace = { git = "https://github.com/nystrom/trace.git" }
-quickcheck = { git = "https://github.com/nystrom/quickcheck.git" }
-quickcheck_macros = { git = "https://github.com/nystrom/quickcheck.git" }
 
 [dev-dependencies]
 pretty_assertions = "*"
-quickcheck = "*"
-quickcheck_macros = "*"
 
 # [build-dependencies]
 # bindgen = "*"
 
 [features]
 immix = []
-yieldpoints = ["immix"]
 default = ["fast"]
 malloc = []
 optimize = []
 fast = ["immix", "optimize"]
-
-

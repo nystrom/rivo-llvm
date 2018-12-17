@@ -1,6 +1,5 @@
 #![feature(custom_attribute, plugin)]
 #![plugin(trace)]
-#![cfg_attr(test, plugin(quickcheck_macros))]
 
 #![allow(unused_variables)]
 #![allow(dead_code)]
@@ -24,13 +23,17 @@ extern crate lazy_static;
 #[macro_use]
 extern crate pretty_assertions;
 
-#[cfg(test)]
-#[macro_use]
-extern crate quickcheck;
-
 extern crate llvm_sys;
 extern crate libc;
 extern crate immix_rust;
+
+#[macro_use]
+extern crate serde_derive;
+extern crate serde;
+extern crate serde_json;
+extern crate json5;
+extern crate rmp_serde;
+
 
 #[macro_use]
 pub mod macros {
