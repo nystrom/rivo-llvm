@@ -94,7 +94,7 @@ impl Typed for Exp {
                 assert_eq!(Type::Ptr { ty: Box::new(Type::Array { ty: Box::new(base_ty.clone()) }) }, ptr.get_type());
                 Type::Ptr { ty: Box::new(base_ty.clone()) }
             },
-            Exp::GetArrayLengthAddr { ptr } => Type::Ptr { ty: Box::new(Type::Word) },
+            Exp::GetArrayLengthAddr { ptr } => Type::Ptr { ty: Box::new(Type::word()) },
         };
 
         // match ty {
@@ -120,10 +120,7 @@ impl Typed for Lit {
             Lit::I64 { value } => Type::I64,
             Lit::F32 { value } => Type::F32,
             Lit::F64 { value } => Type::F64,
-            Lit::Sizeof { ty } => Type::Word,
-            Lit::ArrayBaseOffset => Type::Word,
-            Lit::ArrayLengthOffset => Type::Word,
-            Lit::StructFieldOffset { ty, field } => Type::Word,
+            Lit::Sizeof { ty } => Type::word(),
         }
     }
 }
@@ -238,9 +235,6 @@ impl Typed for Uop {
 impl Typed for Bop {
     fn get_type(&self) -> Type {
         match self {
-            Bop::Add_word => Type::Word,
-            Bop::Mul_word => Type::Word,
-
             Bop::And_z => Type::I1,
             Bop::Or_z => Type::I1,
             Bop::Eq_z => Type::I1,

@@ -1,5 +1,6 @@
 #![allow(non_camel_case_types)]
 
+#[derive(Serialize, Deserialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Uop {
     // Boolean ops
@@ -118,12 +119,9 @@ pub enum Uop {
     Promote_f32_f64,
 }
 
+#[derive(Serialize, Deserialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Bop {
-    // These are either equivalent to Add/Mul_i32 or Add/Mul_i64, but left abstract here.
-    Add_word,
-    Mul_word,
-
     // Boolean ops
     And_z,
     Or_z,

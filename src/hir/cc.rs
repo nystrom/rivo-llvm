@@ -628,7 +628,6 @@ impl TypeLifter for Param {
 
 impl TypeLifter for Type {
     fn lift_type(&self) -> Type {
-
         match self {
             Type::Fun { ret, args } => {
                 // Function types turn into closure types with the code pointer taking an extract env pointer argument.
@@ -653,6 +652,8 @@ impl TypeLifter for Type {
             Type::Array { ty } => {
                 Type::Array { ty: Box::new(ty.lift_type()) }
             },
+            Type::I8 => Type::I8,
+            Type::I16 => Type::I16,
             Type::I32 => Type::I32,
             Type::I64 => Type::I64,
             Type::F32 => Type::F32,

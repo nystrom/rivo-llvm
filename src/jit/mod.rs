@@ -233,9 +233,7 @@ pub fn run_main(name: &str, h: &hir::Root) -> Result<i32, String> {
     //     LLVMAddSymbol(name.as_ptr() as *const c_char, addr);
     // }
 
-    eprintln!("{}: about to translate", name);
     let module = gen::translate_in_context(name, h, context);
-    eprintln!("{}: translated", name);
 
     if cfg!(feature = "optimize") {
         unsafe_llvm!( {
@@ -255,8 +253,6 @@ pub fn run_main(name: &str, h: &hir::Root) -> Result<i32, String> {
             core::LLVMRunPassManager(pm, module.0);
             core::LLVMDisposePassManager(pm);
         });
-
-        eprintln!("{}: optimized", name);
     }
 
     module.dump();
@@ -318,17 +314,17 @@ pub fn run_main(name: &str, h: &hir::Root) -> Result<i32, String> {
             None => {},
         }
 
-        main()
+        let r = main();
+
+        // Let the GC run one last time.
+        gc::yieldpoint();
+
+        r
     }
 
-    eprintln!("{}: about to init gc", name);
     gc::init();
-    eprintln!("{}: about to run", name);
 
     let res = init_and_run(init, main);
-    eprintln!("{}: finished run", name);
-
-    gc::yieldpoint();
 
     unsafe_llvm!( execution_engine::LLVMDisposeExecutionEngine(ee) );
 
@@ -345,15 +341,17 @@ mod tests {
     use crate::hir::ops::*;
     use crate::hir::trees as hir;
 
-    // #[test]
-    // fn print_env() {
-    //     use std::env;
-    //
-    //     for (key, value) in env::vars() {
-    //         println!("{}='{}'", key, value);
-    //     }
-    // }
+    #[ignore]
+    #[test]
+    fn print_env() {
+        use std::env;
 
+        for (key, value) in env::vars() {
+            println!("{}='{}'", key, value);
+        }
+    }
+
+    #[ignore]
     #[test]
     #[should_panic]
     fn panic() {

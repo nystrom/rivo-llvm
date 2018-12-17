@@ -49,10 +49,6 @@ macro_rules! intrinsic {
     };
 }
 
-
-// 64-bit target
-const WORDSIZE: usize = 8;
-
 pub struct Translate {
     pub context: llvm::Context,
 }
@@ -157,36 +153,10 @@ impl Translate {
             },
             mir::Lit::Sizeof { ty } => {
                 // TODO
-                if WORDSIZE == 4 {
-                    llvm::Value::i32(WORDSIZE as i32)
-                }
-                else {
-                    llvm::Value::i64(WORDSIZE as i64)
-                }
-            },
-            mir::Lit::ArrayBaseOffset => {
-                if WORDSIZE == 4 {
-                    llvm::Value::i32(WORDSIZE as i32)
-                }
-                else {
-                    llvm::Value::i64(WORDSIZE as i64)
-                }
-            },
-            mir::Lit::ArrayLengthOffset => {
-                if WORDSIZE == 4 {
-                    llvm::Value::i32(0)
-                }
-                else {
-                    llvm::Value::i64(0)
-                }
-            },
-            mir::Lit::StructFieldOffset { ty, field } => {
-                // TODO
-                if WORDSIZE == 4 {
-                    llvm::Value::i32((*field * WORDSIZE) as i32)
-                }
-                else {
-                    llvm::Value::i64((*field * WORDSIZE) as i64)
+                match mir::Type::word() {
+                    mir::Type::I32 => llvm::Value::i32(4),
+                    mir::Type::I64 => llvm::Value::i64(8),
+                    _ => unimplemented!(),
                 }
             },
         }
@@ -201,7 +171,6 @@ impl Translate {
             lir::Type::I64 => context.i64_type(),
             lir::Type::F32 => context.float_type(),
             lir::Type::F64 => context.double_type(),
-            lir::Type::Word => if WORDSIZE == 8 { context.i64_type() } else { context.i32_type() },
             lir::Type::Void => context.void_type(),
             lir::Type::Ptr { ty } => {
                 let t = Translate::to_type(context, ty);
@@ -210,7 +179,7 @@ impl Translate {
             lir::Type::Array { ty } => {
                 let t = Translate::to_type(context, ty);
                 let ps = vec![
-                    Translate::to_type(context, &lir::Type::Word),
+                    Translate::to_type(context, &mir::Type::word()),
                     context.array_type(t, 0),
                 ];
                 context.pointer_type(context.structure_type(&ps, false))
@@ -564,9 +533,6 @@ impl<'a> BodyTranslator<'a> {
 
                     Bop::Copysign_f32 => intrinsic!(self, "llvm.copysign.f32", a1, a2, (mir::Type::F32, mir::Type::F32) -> mir::Type::F32),
                     Bop::Copysign_f64 => intrinsic!(self, "llvm.copysign.f64", a1, a2, (mir::Type::F64, mir::Type::F64) -> mir::Type::F64),
-
-                    Bop::Add_word => self.builder.add(a1, a2, &self.fresh_name()),
-                    Bop::Mul_word => self.builder.mul(a1, a2, &self.fresh_name()),
 
                     // And and or can be implemented with bitwise operations.
                     // These don't short-circuit, but since the subexpressions have no structure, it should be okay.

@@ -37,6 +37,8 @@ extern crate rmp_serde;
 
 #[macro_use]
 pub mod macros {
+    // Calls to LLVM that are independent of the Context are not thread-safe so we
+    // guard with a lock.
     macro_rules! unsafe_llvm {
         ($e: expr) => {
             {
@@ -46,7 +48,9 @@ pub mod macros {
                     $e
                 };
                 println!("unlocked");
-                *guard = ();
+                *guard = ();    // Force a use of guard to keep the lock from getting dropped
+                                // (and therefore unlocking).
+                                // Not sure if this is necessary.
                 v
             }
         };
@@ -58,6 +62,6 @@ pub mod llvm;
 pub mod lir;
 pub mod mir;
 pub mod hir;
-pub mod funky;
+// pub mod funky;
 pub mod gen;
 pub mod jit;

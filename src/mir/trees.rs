@@ -98,7 +98,6 @@ pub enum Type {
     F64,
 
     Void,
-    Word,  // i32 or i64 depending on array index size
 
     Ptr { ty: Box<Type> },        // LLVM: ty*
 
@@ -108,6 +107,16 @@ pub enum Type {
 
     // Function types (usually wrapped in Ptr)
     Fun { ret: Box<Type>, args: Vec<Type> },
+}
+
+impl Type {
+    /// This is the word size of the target architecture.
+    /// It should be either I32 or I64. Other code may panic if this is not true.
+    /// The word size gives the array length and array index size and the field offset size.
+    /// For simplicity, structs on the heap are allocated to be word size * number of fields.
+    pub fn word() -> Type {
+        Type::I64
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -122,7 +131,4 @@ pub enum Lit {
     F32 { value: f32 },
     F64 { value: f64 },
     Sizeof { ty: Type },
-    ArrayBaseOffset,      // i32 or i64 depending on array index size (should = 0)
-    ArrayLengthOffset,    // i32 or i64 depending on array index size (should = sizeof(Word))
-    StructFieldOffset { ty: Type, field: usize }, // word size
 }

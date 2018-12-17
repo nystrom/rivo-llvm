@@ -2,8 +2,11 @@ use crate::common::names::Name;
 
 use crate::hir::ops::*;
 
+#[derive(Serialize, Deserialize)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Type {
+    I8,
+    I16,
     I32,
     I64,
     F32,
@@ -21,14 +24,18 @@ pub enum Type {
     Box,
 }
 
+#[derive(Serialize, Deserialize)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Param {
     pub ty: Type,
     pub name: Name,
 }
 
+#[derive(Serialize, Deserialize)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Lit {
+    I8 { value: i8 },
+    I16 { value: i16 },
     I32 { value: i32 },
     I64 { value: i64 },
     F32 { value: f32 },
@@ -36,11 +43,13 @@ pub enum Lit {
     Bool { value: bool },
 }
 
+#[derive(Serialize, Deserialize)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Root {
     pub defs: Vec<Def>
 }
 
+#[derive(Serialize, Deserialize)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum Def {
     VarDef { ty: Type, name: Name, exp: Box<Exp> },
@@ -48,6 +57,7 @@ pub enum Def {
     ExternDef { ty: Type, name: Name },
 }
 
+#[derive(Serialize, Deserialize)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum Exp {
     NewArray { ty: Type, length: Box<Exp> },
@@ -87,6 +97,7 @@ pub enum Exp {
     Cast { ty: Type, exp: Box<Exp> },
 }
 
+#[derive(Serialize, Deserialize)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum Stm {
     IfElse { cond: Box<Exp>, if_true: Box<Stm>, if_false: Box<Stm> },
@@ -100,6 +111,7 @@ pub enum Stm {
     StructAssign { ty: Type, base: Box<Exp>, field: Name, value: Box<Exp> },
 }
 
+#[derive(Serialize, Deserialize)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Field {
     pub param: Param,

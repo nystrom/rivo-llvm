@@ -88,7 +88,6 @@ impl Translate {
             mir::Type::I16 => mir::Lit::I16 { value: 0 },
             mir::Type::I32 => mir::Lit::I32 { value: 0 },
             mir::Type::I64 => mir::Lit::I64 { value: 0 },
-            mir::Type::Word => mir::Lit::ArrayBaseOffset,  // FIXME HACK: remove word type from MIR.
             mir::Type::F32 => mir::Lit::F32 { value: 0.0 },
             mir::Type::F64 => mir::Lit::F64 { value: 0.0 },
             mir::Type::Void => mir::Lit::Void,
@@ -126,6 +125,8 @@ impl Translate {
 
     pub fn translate_type(ty: &hir::Type) -> mir::Type {
         match ty {
+            hir::Type::I8 => mir::Type::I8,
+            hir::Type::I16 => mir::Type::I16,
             hir::Type::I32 => mir::Type::I32,
             hir::Type::I64 => mir::Type::I64,
             hir::Type::F32 => mir::Type::F32,
@@ -649,17 +650,18 @@ impl ProcTranslator {
                     ty: array_ptr_type.clone(),
                     exp: Box::new(
                         mir::Exp::Call {
-                            fun_type: mir::Type::Fun { ret: Box::new(byte_ptr_type), args: vec![mir::Type::Word] },
+                            fun_type: mir::Type::Fun { ret: Box::new(byte_ptr_type), args: vec![mir::Type::word()] },
                             fun: Box::new(api::alloc()),
                             args: vec![
+                                // sizeof(word) + (len * sizeof(base_ty))
                                 mir::Exp::Binary {
-                                    op: Bop::Add_word,
-                                    e1: Box::new(mir::Exp::Lit { lit: mir::Lit::ArrayBaseOffset }),
+                                    op: api::add_word(),
+                                    e1: Box::new(mir::Exp::Lit { lit: mir::Lit::Sizeof { ty: mir::Type::word() } }),
                                     e2: Box::new(
                                         mir::Exp::Binary {
-                                            op: Bop::Mul_word,
-                                            e1: Box::new(mir::Exp::Lit { lit: mir::Lit::Sizeof { ty: base_ty.clone() }}),
-                                            e2: Box::new(mir::Exp::Temp { name: len, ty: mir::Type::Word }),
+                                            op: api::mul_word(),
+                                            e1: Box::new(mir::Exp::Temp { name: len, ty: mir::Type::word() }),
+                                            e2: Box::new(mir::Exp::Lit { lit: mir::Lit::Sizeof { ty: base_ty.clone() }}),
                                         }
                                     ),
                                 }
@@ -670,16 +672,16 @@ impl ProcTranslator {
 
                 mir::Exp::Block {
                     body: vec![
-                        mir::Stm::Move { ty: mir::Type::Word, lhs: len, rhs: Box::new(n) },
+                        mir::Stm::Move { ty: mir::Type::word(), lhs: len, rhs: Box::new(n) },
                         mir::Stm::Move { ty: array_ptr_type.clone(), lhs: array, rhs: Box::new(alloc) },
                         mir::Stm::Store {
-                            ty: mir::Type::Word,
+                            ty: mir::Type::word(),
                             ptr: Box::new(
                                 mir::Exp::GetArrayLengthAddr {
                                     ptr: Box::new(mir::Exp::Temp { name: array, ty: array_ptr_type.clone() })
                                 }
                             ),
-                            value: Box::new(mir::Exp::Temp { name: len, ty: mir::Type::Word }),
+                            value: Box::new(mir::Exp::Temp { name: len, ty: mir::Type::word() }),
                         }
                     ],
                     exp: Box::new(mir::Exp::Temp { name: array, ty: array_ptr_type.clone() })
@@ -738,7 +740,7 @@ impl ProcTranslator {
                     ty: struct_ptr_ty.clone(),
                     exp: Box::new(
                         mir::Exp::Call {
-                            fun_type: mir::Type::Fun { ret: Box::new(byte_ptr_type), args: vec![mir::Type::Word] },
+                            fun_type: mir::Type::Fun { ret: Box::new(byte_ptr_type), args: vec![mir::Type::word()] },
                             fun: Box::new(api::alloc()),
                             args: vec![
                                 mir::Exp::Lit { lit: mir::Lit::Sizeof { ty: struct_ty.clone() } },
@@ -889,13 +891,15 @@ impl ProcTranslator {
                 let a = self.translate_exp(&*array);
 
                 mir::Exp::Load {
-                    ty: mir::Type::Word,
+                    ty: mir::Type::word(),
                     ptr: Box::new(
                         mir::Exp::GetArrayLengthAddr { ptr: Box::new(a) }
                     )
                 }
             }
 
+            hir::Exp::Lit { lit: hir::Lit::I8 { value } } => mir::Exp::Lit { lit: mir::Lit::I8 { value: *value } },
+            hir::Exp::Lit { lit: hir::Lit::I16 { value } } => mir::Exp::Lit { lit: mir::Lit::I16 { value: *value } },
             hir::Exp::Lit { lit: hir::Lit::I32 { value } } => mir::Exp::Lit { lit: mir::Lit::I32 { value: *value } },
             hir::Exp::Lit { lit: hir::Lit::I64 { value } } => mir::Exp::Lit { lit: mir::Lit::I64 { value: *value } },
             hir::Exp::Lit { lit: hir::Lit::F32 { value } } => mir::Exp::Lit { lit: mir::Lit::F32 { value: *value } },

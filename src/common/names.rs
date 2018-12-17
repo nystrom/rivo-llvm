@@ -1,4 +1,9 @@
 use std::fmt;
+use serde::Serialize;
+use serde::Deserialize;
+use serde::Serializer;
+use serde::Deserializer;
+use serde::de;
 
 use std::sync::Mutex;
 use string_interner::{StringInterner, Sym};
@@ -29,7 +34,41 @@ impl Interned {
     }
 }
 
-#[derive(Copy, Clone, PartialOrd, Ord, Eq, PartialEq, Hash)]
+impl Serialize for Interned {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where S: Serializer
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for Interned {
+    fn deserialize<D>(deserializer: D) -> Result<Interned, D::Error>
+        where D: Deserializer<'de>
+    {
+
+        struct InternedVisitor;
+
+        impl<'de> de::Visitor<'de> for InternedVisitor {
+            type Value = Interned;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a string")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Interned, E>
+                where E: de::Error,
+            {
+                let x = Interned::new(value);
+                Ok(x)
+            }
+        }
+
+        deserializer.deserialize_str(InternedVisitor)
+    }
+}
+
+#[derive(Copy, Clone, PartialOrd, Ord, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct Name(Interned);
 
 impl Name {
@@ -54,8 +93,6 @@ impl fmt::Display for Name {
         write!(f, "{}", self.0.to_string())
     }
 }
-
-
 
 pub struct FreshNameGenerator {
     prefix: String,
