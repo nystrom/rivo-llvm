@@ -15,10 +15,7 @@ opt-level = 3
 lto = true
 
 [dependencies]
-num = "*"
 pretty = "*"
-rpds = "*"
-failure = "*"
 trace = "*"
 lazy_static = "*"
 string-interner = "0.7.0"
@@ -30,15 +27,15 @@ serde_json = "*"
 json5 = "*"
 rmp-serde = "*"
 
-# argument parsing
-clap = "*"
-
 # for LLVM and invoking the JIT
+inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "llvm7-0" }
 llvm-sys = "*"
-llvm-alt = "*"
 libc = "*"
 
 immix_rust = { git = "https://github.com/nystrom/immix-rust.git", features = ["mt-trace"] }
+
+# argument parsing in main
+clap = "*"
 
 [patch.crates-io]
 trace = { git = "https://github.com/nystrom/trace.git" }

@@ -9,11 +9,7 @@
 #![feature(nll)]
 #![feature(box_patterns)]
 
-extern crate num;
 extern crate pretty;
-extern crate rpds;
-#[macro_use]
-extern crate failure;
 
 extern crate string_interner;
 #[macro_use]
@@ -24,6 +20,7 @@ extern crate lazy_static;
 extern crate pretty_assertions;
 
 extern crate llvm_sys;
+extern crate inkwell;
 extern crate libc;
 extern crate immix_rust;
 
