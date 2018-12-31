@@ -42,7 +42,7 @@ pub enum Stm {
     // ty should be the type of rhs
     Move { ty: Type, lhs: Name, rhs: Box<Exp> },
     // ty should be the type of value
-    // ptr should have type Ptr { ty }
+    // ptr should have type IRef { ty }
     Store { ty: Type, ptr: Box<Exp>, value: Box<Exp> },
 
     // Early return
@@ -59,7 +59,7 @@ pub enum Exp {
     // fun_type should be a Fun type (not a Ptr { Fun })
     Call { fun_type: Type, fun: Box<Exp>, args: Vec<Exp> },
 
-    // ptr should have type Ptr { ty }
+    // ptr should have type IRef { ty }
     Load { ty: Type, ptr: Box<Exp> },
 
     Binary { op: Bop, e1: Box<Exp>, e2: Box<Exp> },
@@ -75,18 +75,38 @@ pub enum Exp {
     Temp { name: Name, ty: Type },
 
     // Address of a struct field entry.
-    // ptr has type Ptr { struct_ty }
+    // ptr has type Ref { struct_ty }, result is type IRef
     GetStructElementAddr { struct_ty: Type, ptr: Box<Exp>, field: usize },
 
     // Address of an array entry.
-    // ptr has type Ptr { Array { base_ty } }
+    // We've already used GetStructElementAddr to get an IRef to the internal array.
+    // ptr has type [I]Ref { Array { base_ty } }, result is type IRef
     GetArrayElementAddr { base_ty: Type, ptr: Box<Exp>, index: Box<Exp> },
 
-    // Address of the array length field.
-    // ptr has type Ptr { Array { ?? } }
-    GetArrayLengthAddr { ptr: Box<Exp> },
+    New { ty: Type },
+    NewHybrid { ty: Type, length: Box<Exp> },
 }
 
+// MIR types are based on MuVM types, but simplified
+// int<n> Fixed-size integer type of n bits
+// float IEEE754 single-precision (32-bit) floating-point type
+// double IEEE754 double-precision (32-bit) floating-point type
+// uptr<T> Untraced pointer to a memory location of type T
+// ufuncptr<sig> Untraced pointer to a native function with signature sig
+// struct<T1 T2 . . .> Structure with fields T1 T2 . . .
+// hybrid<F1 F2 . . . V> A hybrid with fixed-part fields F1 F2 . . . and variable part type V
+// array<T n> Fixed-size array of element type T and length n
+// vector<T n> Vector type of element type T and length n
+// ref<T> Object reference to a heap object of type T
+// iref<T> Internal reference to a memory location of type T
+// weakref<T> Weak object reference to a heap object of type T
+// funcref<sig> Function reference to a Mu function with signature sig
+// stackref Opaque reference to a Mu stack
+// threadref Opaque reference to a Mu thread
+// framecursorref Opaque reference to a Mu frame cursor (see Section 6.3.3)
+// irbuilderref Opaque reference to a Mu IR builder
+// tagref64 64-bit tagged reference
+// void Void type
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Type {
     I1, // bool
@@ -94,16 +114,25 @@ pub enum Type {
     I16,
     I32,
     I64,
+
     F32,
     F64,
 
     Void,
 
+    // internal reference to a field
+    IRef { ty: Box<Type> },       // LLVM: ty*
+    // object reference
+    Ref { ty: Box<Type> },        // LLVM: ty*
+    // untraced pointer
     Ptr { ty: Box<Type> },        // LLVM: ty*
 
-    // Struct types (usually wrapped in Ptr)
-    Array { ty: Box<Type> },      // LLVM: { i32, [0 x ty] }
+    // Fixed fields, then 0 or more of variant type
+    // Hybrid is the only dynamically sized type.
+    Hybrid { fields: Vec<Type>, variant: Box<Type> },
     Struct { fields: Vec<Type> }, // LLVM: { .. }
+    // like a struct, but with overlapping fields... translates into the a struct
+    Union { variants: Vec<Type> }, // LLVM: { .. }
 
     // Function types (usually wrapped in Ptr)
     Fun { ret: Box<Type>, args: Vec<Type> },

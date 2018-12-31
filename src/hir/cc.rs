@@ -661,6 +661,7 @@ impl TypeLifter for Type {
             Type::Bool => Type::Bool,
             Type::Void => Type::Void,
             Type::Box => Type::Box,
+            Type::Union { variants } => Type::Union { variants: variants.iter().map(|a| a.lift_type()).collect() },
         }
     }
 }

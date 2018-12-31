@@ -19,6 +19,8 @@ pub enum Type {
     Struct { fields: Vec<Param> },
     Fun { ret: Box<Type>, args: Vec<Type> },
 
+    Union { variants: Vec<Type> },
+
     // Boxed/tagged values.
     // To use a boxed value, one must explicitly unbox.
     Box,

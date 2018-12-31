@@ -57,8 +57,8 @@ pub enum Stm {
     // Address of an array entry.
     GetArrayElementAddr { dst: Exp, base_ty: Type, ptr: Exp, index: Exp },
 
-    // Address of the array length field.
-    GetArrayLengthAddr { dst: Exp, ptr: Exp },
+    New { dst: Exp, ty: Type },
+    NewHybrid { dst: Exp, ty: Type, length: Exp },
 }
 
 #[derive(Clone, Debug)]

@@ -92,6 +92,7 @@ impl Translate {
             mir::Type::F64 => mir::Lit::F64 { value: 0.0 },
             mir::Type::Void => mir::Lit::Void,
             mir::Type::Ptr { .. } => mir::Lit::Null { ty: ty.clone() },
+            mir::Type::Ref { .. } => mir::Lit::Null { ty: ty.clone() },
             _ => panic!("no default value for type {:?}", ty),
         }
     }
@@ -125,25 +126,42 @@ impl Translate {
 
     pub fn translate_type(ty: &hir::Type) -> mir::Type {
         match ty {
+            hir::Type::Bool => mir::Type::I1,
             hir::Type::I8 => mir::Type::I8,
             hir::Type::I16 => mir::Type::I16,
             hir::Type::I32 => mir::Type::I32,
             hir::Type::I64 => mir::Type::I64,
             hir::Type::F32 => mir::Type::F32,
             hir::Type::F64 => mir::Type::F64,
-            hir::Type::Bool => mir::Type::I1,
             hir::Type::Void => mir::Type::Void,
-            hir::Type::Array { ty } => {
-                mir::Type::Ptr {
+            hir::Type::Union { variants } => {
+                mir::Type::Ref {
                     ty: Box::new(
-                        mir::Type::Array {
-                            ty: Box::new(Translate::translate_type(ty))
+                        mir::Type::Struct {
+                            fields: vec![
+                                mir::Type::I8,
+                                mir::Type::Union {
+                                    variants: variants.iter().map(|ty| Translate::translate_type(ty)).collect()
+                                }
+                            ]
+                        }
+                    )
+                }
+            },
+            hir::Type::Array { ty } => {
+                mir::Type::Ref {
+                    ty: Box::new(
+                        mir::Type::Hybrid {
+                            fields: vec![
+                                mir::Type::I32
+                            ],
+                            variant: Box::new(Translate::translate_type(ty))
                         }
                     )
                 }
             },
             hir::Type::Struct { fields } => {
-                mir::Type::Ptr {
+                mir::Type::Ref {
                     ty: Box::new(Translate::translate_struct_type(ty))
                 }
             },
@@ -156,7 +174,7 @@ impl Translate {
 
             hir::Type::Box => {
                 // TODO
-                mir::Type::Ptr {
+                mir::Type::Ref {
                     ty: Box::new(
                         mir::Type::Struct { fields: vec![] }
                     )
@@ -408,7 +426,11 @@ impl ProcTranslator {
                         ptr: Box::new(
                             mir::Exp::GetArrayElementAddr {
                                 base_ty: base_ty.clone(),
-                                ptr: Box::new(a),
+                                ptr: box mir::Exp::GetStructElementAddr {
+                                    struct_ty: Translate::translate_type(&hir::Type::Array { ty: box ty.clone() }),
+                                    ptr: Box::new(a),
+                                    field: 1,
+                                },
                                 index: Box::new(i),
                             }
                         ),
@@ -631,43 +653,25 @@ impl ProcTranslator {
 
                 let base_ty = Translate::translate_type(ty);
 
-                let array_ptr_type = mir::Type::Ptr {
-                    ty: Box::new(
-                        mir::Type::Array {
-                            ty: Box::new(base_ty.clone())
-                        }
-                    )
+                let array_type = mir::Type::Hybrid {
+                    fields: vec![mir::Type::I32],
+                    variant: Box::new(base_ty.clone())
                 };
 
-                let byte_ptr_type = mir::Type::Ptr {
+                let array_ptr_type = mir::Type::Ref {
+                    ty: Box::new(array_type.clone())
+                };
+
+                let byte_ptr_type = mir::Type::Ref {
                     ty: Box::new(
                         mir::Type::I8
                     )
                 };
 
                 // To allocate, we compute the size of the array, then call malloc.
-                let alloc = mir::Exp::Cast {
-                    ty: array_ptr_type.clone(),
-                    exp: Box::new(
-                        mir::Exp::Call {
-                            fun_type: mir::Type::Fun { ret: Box::new(byte_ptr_type), args: vec![mir::Type::word()] },
-                            fun: Box::new(api::alloc()),
-                            args: vec![
-                                // sizeof(word) + (len * sizeof(base_ty))
-                                mir::Exp::Binary {
-                                    op: api::add_word(),
-                                    e1: Box::new(mir::Exp::Lit { lit: mir::Lit::Sizeof { ty: mir::Type::word() } }),
-                                    e2: Box::new(
-                                        mir::Exp::Binary {
-                                            op: api::mul_word(),
-                                            e1: Box::new(mir::Exp::Temp { name: len, ty: mir::Type::word() }),
-                                            e2: Box::new(mir::Exp::Lit { lit: mir::Lit::Sizeof { ty: base_ty.clone() }}),
-                                        }
-                                    ),
-                                }
-                            ]
-                        }
-                    )
+                let alloc = mir::Exp::NewHybrid {
+                    ty: array_type.clone(),
+                    length: Box::new(mir::Exp::Temp { name: len, ty: mir::Type::word() }),
                 };
 
                 mir::Exp::Block {
@@ -676,11 +680,11 @@ impl ProcTranslator {
                         mir::Stm::Move { ty: array_ptr_type.clone(), lhs: array, rhs: Box::new(alloc) },
                         mir::Stm::Store {
                             ty: mir::Type::word(),
-                            ptr: Box::new(
-                                mir::Exp::GetArrayLengthAddr {
-                                    ptr: Box::new(mir::Exp::Temp { name: array, ty: array_ptr_type.clone() })
-                                }
-                            ),
+                            ptr: box mir::Exp::GetStructElementAddr {
+                                struct_ty: array_type,
+                                ptr: Box::new(mir::Exp::Temp { name: array, ty: array_ptr_type.clone() }),
+                                field: 0,
+                            },
                             value: Box::new(mir::Exp::Temp { name: len, ty: mir::Type::word() }),
                         }
                     ],
@@ -733,32 +737,21 @@ impl ProcTranslator {
             hir::Exp::StructLit { fields } => {
                 let field_types: Vec<mir::Type> = fields.iter().map(|f| Translate::translate_type(&f.param.ty)).collect();
                 let struct_ty = mir::Type::Struct { fields: field_types.clone() };
-                let struct_ptr_ty = mir::Type::Ptr { ty: Box::new(mir::Type::Struct { fields: field_types.clone() }) };
-                let byte_ptr_type = mir::Type::Ptr { ty: Box::new(mir::Type::I8) };
-
-                let alloc = mir::Exp::Cast {
-                    ty: struct_ptr_ty.clone(),
-                    exp: Box::new(
-                        mir::Exp::Call {
-                            fun_type: mir::Type::Fun { ret: Box::new(byte_ptr_type), args: vec![mir::Type::word()] },
-                            fun: Box::new(api::alloc()),
-                            args: vec![
-                                mir::Exp::Lit { lit: mir::Lit::Sizeof { ty: struct_ty.clone() } },
-                            ],
-                        }
-                    )
-                };
+                let struct_ptr_ty = mir::Type::Ref { ty: Box::new(mir::Type::Struct { fields: field_types.clone() }) };
+                let byte_ptr_type = mir::Type::Ref { ty: Box::new(mir::Type::I8) };
 
                 let t = self.new_temp();
 
                 let mut ss = Vec::new();
 
-                // t = (ty) malloc(sizeof(ty))
+                // t = new ty
                 ss.push(
                     mir::Stm::Move {
                         ty: struct_ptr_ty.clone(),
                         lhs: t,
-                        rhs: Box::new(alloc),
+                        rhs: Box::new(mir::Exp::New {
+                            ty: struct_ty.clone(),
+                        }),
                     }
                 );
 
@@ -855,15 +848,19 @@ impl ProcTranslator {
                 let a = self.translate_exp(&*array);
                 let i = self.translate_exp(&*index);
 
+                let base = mir::Exp::GetStructElementAddr {
+                    struct_ty: Translate::translate_type(&hir::Type::Array { ty: box ty.clone() }),
+                    ptr: Box::new(a),
+                    field: 1
+                };
+
                 mir::Exp::Load {
                     ty: base_ty.clone(),
-                    ptr: Box::new(
-                        mir::Exp::GetArrayElementAddr {
-                            base_ty: base_ty.clone(),
-                            ptr: Box::new(a),
-                            index: Box::new(i),
-                        }
-                    ),
+                    ptr: box mir::Exp::GetArrayElementAddr {
+                        base_ty: base_ty.clone(),
+                        ptr: Box::new(base),
+                        index: Box::new(i),
+                    }
                 }
             },
             hir::Exp::StructLoad { ty, base, field } => {
@@ -893,7 +890,11 @@ impl ProcTranslator {
                 mir::Exp::Load {
                     ty: mir::Type::word(),
                     ptr: Box::new(
-                        mir::Exp::GetArrayLengthAddr { ptr: Box::new(a) }
+                        mir::Exp::GetStructElementAddr {
+                            struct_ty: Translate::translate_type(&hir::Type::Array { ty: box hir::Type::I8 }),
+                            ptr: Box::new(a),
+                            field: 0
+                        }
                     )
                 }
             }

@@ -20,7 +20,7 @@ pub fn mul_word() -> Bop {
 }
 
 pub fn alloc() -> mir::Exp {
-    let byte_ptr = mir::Type::Ptr { ty: Box::new(mir::Type::I8) };
+    let byte_ptr = mir::Type::Ref { ty: Box::new(mir::Type::I8) };
     mir::Exp::FunctionAddr {
         name: Name::new("malloc"),
         ty: mir::Type::Ptr { ty: Box::new(mir::Type::Fun { ret: Box::new(byte_ptr), args: vec![mir::Type::word()] }) },
@@ -44,7 +44,7 @@ pub fn boxer(ty: &mir::Type) -> mir::Exp {
         _ => unimplemented!()
     };
 
-    let byte_ptr = mir::Type::Ptr { ty: Box::new(mir::Type::I8) };
+    let byte_ptr = mir::Type::Ref { ty: Box::new(mir::Type::I8) };
 
     mir::Exp::FunctionAddr {
         name: Name::new(name),
@@ -62,7 +62,7 @@ pub fn unboxer(ty: &mir::Type) -> mir::Exp {
         _ => unimplemented!()
     };
 
-    let byte_ptr = mir::Type::Ptr { ty: Box::new(mir::Type::I8) };
+    let byte_ptr = mir::Type::Ref { ty: Box::new(mir::Type::I8) };
 
     mir::Exp::FunctionAddr {
         name: Name::new(name),

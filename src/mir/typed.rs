@@ -19,11 +19,16 @@ impl Typed for Stm {
             },
             Stm::Store { ty, ptr, value } => {
                 // ty should be the type of value
-                // ptr should have type Ptr { ty }
+                // ptr should have type IRef { ty }
                 let vty = value.get_type();
                 let pty = ptr.get_type();
                 assert_eq!(ty, &vty);
-                assert_eq!(Type::Ptr { ty: Box::new(ty.clone()) }, pty);
+                match pty {
+                    Type::Ref { ty: box a } => assert_eq!(ty, &a),
+                    Type::IRef { ty: box a } => assert_eq!(ty, &a),
+                    Type::Ptr { ty: box a } => assert_eq!(ty, &a),
+                    _ => panic!("type of pointer in store must be a pointer or ref type")
+                }
             },
             Stm::Return { exp } => {},
         }
@@ -53,16 +58,42 @@ impl Typed for Exp {
                 panic!("call function type must be a function type, got {:?}", fun_type)
             },
             Exp::Load { ty, ptr } => {
-                assert_eq!(ptr.get_type(), Type::Ptr { ty: Box::new(ty.clone()) });
+                match ptr.get_type() {
+                    Type::Ref { ty: box a } => assert_eq!(ty, &a),
+                    Type::IRef { ty: box a } => assert_eq!(ty, &a),
+                    Type::Ptr { ty: box a } => assert_eq!(ty, &a),
+                    _ => panic!("type of pointer in load must be a pointer or ref type")
+                }
                 ty.clone()
             }
             Exp::Binary { op, e1, e2 } => op.get_type(),
             Exp::Unary { op, exp } => op.get_type(),
             Exp::Cast { ty, exp } => {
                 // Both should be pointer types.
-                assert!(match exp.get_type() { Type::Ptr { .. } => true, _ => false }, "can only cast from ptr types, got {:?}", exp.get_type());
-                assert!(match ty { Type::Ptr { .. } => true, _ => false }, "can only cast to ptr types, got {:?}", exp.get_type());
+                assert!(match exp.get_type() {
+                    Type::Ptr { .. } => true,
+                    Type::Ref { .. } => true,
+                    Type::IRef { .. } => true,
+                    _ => false }, "can only cast from ptr types, got {:?}", exp.get_type());
+                assert!(match ty {
+                    Type::Ptr { .. } => true,
+                    Type::Ref { .. } => true,
+                    Type::IRef { .. } => true,
+                    _ => false }, "can only cast to ptr types, got {:?}", exp.get_type());
                 ty.clone()
+            },
+            Exp::New { ty } => {
+                assert!(match ty {
+                    Type::Hybrid { .. } => false,
+                    _ => true }, "can only allocate non-hybrid types with New, got {:?}", ty);
+                Type::Ref { ty: box ty.clone() }
+            },
+            Exp::NewHybrid { ty, length } => {
+                assert_eq!(length.get_type(), Type::I64);
+                assert!(match ty {
+                    Type::Hybrid { .. } => true,
+                    _ => false }, "can only allocate hybrid types with NewHybrid, got {:?}", ty);
+                Type::Ref { ty: box ty.clone() }
             },
             Exp::Lit { lit } => lit.get_type(),
             Exp::FunctionAddr { name, ty } => {
@@ -81,9 +112,9 @@ impl Typed for Exp {
                 ty.clone()
             },
             Exp::GetStructElementAddr { struct_ty: Type::Struct { fields }, ptr, field } => {
-                assert_eq!(Type::Ptr { ty: Box::new(Type::Struct { fields: fields.clone() }) }, ptr.get_type());
+                assert_eq!(Type::Ref { ty: Box::new(Type::Struct { fields: fields.clone() }) }, ptr.get_type());
                 match fields.get(*field) {
-                    Some(ty) => Type::Ptr { ty: Box::new(ty.clone()) },
+                    Some(ty) => Type::IRef { ty: Box::new(ty.clone()) },
                     _ => panic!("ill-typed expression {:#?}, field {} does not exist", self, field)
                 }
             },
@@ -91,25 +122,20 @@ impl Typed for Exp {
                 panic!("struct accessor must have struct type, got {:?}", struct_ty)
             },
             Exp::GetArrayElementAddr { base_ty, ptr, index } => {
-                assert_eq!(Type::Ptr { ty: Box::new(Type::Array { ty: Box::new(base_ty.clone()) }) }, ptr.get_type());
-                Type::Ptr { ty: Box::new(base_ty.clone()) }
+                assert_eq!(Type::Ref { ty: Box::new(Type::Hybrid { fields: vec![Type::I32], variant: Box::new(base_ty.clone()) }) }, ptr.get_type());
+                Type::IRef { ty: Box::new(base_ty.clone()) }
             },
-            Exp::GetArrayLengthAddr { ptr } => Type::Ptr { ty: Box::new(Type::word()) },
         };
-
-        // match ty {
-        //     Type::Ptr { ty: box Type::Ptr { .. } } => panic!("found pointer to pointer {:#?} in {:#?}", ty, self),
-        //     _ => {},
-        // }
 
         ty
     }
 }
+
 impl Typed for Lit {
     fn get_type(&self) -> Type {
         match self {
             Lit::Null { ty } => {
-                assert!(match ty { Type::Ptr { .. } => true, _ => false }, "null literals must have pointer type, got {:?}", ty);
+                assert!(match ty { Type::Ref { .. } => true, _ => false }, "null literals must have pointer type, got {:?}", ty);
                 ty.clone()
             },
             Lit::Void => Type::Void,

@@ -162,6 +162,99 @@ impl Translate {
         }
     }
 
+    fn sizeof_exp(ty: &lir::Type) -> (lir::Exp, lir::Exp) {
+        match ty {
+            lir::Type::Hybrid { fields, box variant } => {
+                let mut n = 0;
+                for f in fields {
+                    let s = Translate::sizeof(&f);
+                    // Align
+                    if s != 0 {
+                        while n % s != 0 {
+                            n += 1;
+                        }
+                        n += s;
+                    }
+                }
+                let v = Translate::sizeof(&variant);
+                // Align
+                if v != 0 {
+                    while n % v != 0 {
+                        n += 1;
+                    }
+                }
+
+                let fixed_size = lir::Exp::Lit { lit: lir::Lit::I64 { value: n as i64 } };
+                let variant_size = lir::Exp::Lit { lit: lir::Lit::I64 { value: v as i64 } };
+                (fixed_size, variant_size)
+            },
+            ty => (lir::Exp::Lit { lit: lir::Lit::I64 { value: Translate::sizeof(ty) as i64 } }, lir::Exp::Lit { lit: lir::Lit::I64 { value: 0 } }),
+        }
+    }
+
+    fn sizeof(ty: &lir::Type) -> usize {
+        match ty {
+            lir::Type::I1 => 1,
+            lir::Type::I8 => 1,
+            lir::Type::I16 => 2,
+            lir::Type::I32 => 4,
+            lir::Type::I64 => 8,
+            lir::Type::F32 => 4,
+            lir::Type::F64 => 8,
+            lir::Type::Void => 0,
+            lir::Type::Ptr { box ty } => if mir::Type::word() == mir::Type::I64 { 8 } else { 4 },
+            lir::Type::Ref { box ty } => if mir::Type::word() == mir::Type::I64 { 8 } else { 4 },
+            lir::Type::IRef { box ty } => if mir::Type::word() == mir::Type::I64 { 8 } else { 4 },
+            lir::Type::Hybrid { fields, box variant } => {
+                let mut n = 0;
+                for f in fields {
+                    let s = Translate::sizeof(&f);
+                    // Align
+                    if s != 0 {
+                        while n % s != 0 {
+                            n += 1;
+                        }
+                        n += s;
+                    }
+                }
+                let v = Translate::sizeof(&variant);
+                // Align
+                if v != 0 {
+                    while n % v != 0 {
+                        n += 1;
+                    }
+                    n += v;
+                }
+                n
+            },
+            lir::Type::Struct { fields } => {
+                let mut n = 0;
+                for f in fields {
+                    let s = Translate::sizeof(&f);
+                    // Align
+                    if s != 0 {
+                        while n % s != 0 {
+                            n += 1;
+                        }
+                        n += s;
+                    }
+                }
+                n
+            },
+            lir::Type::Union { variants } => {
+                let mut n = 0;
+                for f in variants {
+                    let s = Translate::sizeof(&f);
+                    if n < s {
+                        n = s;
+                    }
+                }
+                n
+            },
+            lir::Type::Fun { ret, args } => unimplemented!(),
+        }
+    }
+
     fn to_type(context: &llvm::Context, ty: &lir::Type) -> llvm::Type {
         match ty {
             lir::Type::I1 => context.i1_type(),
@@ -176,16 +269,30 @@ impl Translate {
                 let t = Translate::to_type(context, ty);
                 context.pointer_type(t)
             },
-            lir::Type::Array { ty } => {
+            lir::Type::Ref { ty } => {
                 let t = Translate::to_type(context, ty);
-                let ps = vec![
-                    Translate::to_type(context, &mir::Type::word()),
-                    context.array_type(t, 0),
-                ];
+                context.pointer_type(t)
+            },
+            lir::Type::IRef { ty } => {
+                let t = Translate::to_type(context, ty);
+                context.pointer_type(t)
+            },
+            lir::Type::Hybrid { fields, variant } => {
+                let mut ps: Vec<llvm::Type> = fields.iter().map(|a| Translate::to_type(context, a)).collect();
+                let t = Translate::to_type(context, variant);
+                ps.push(context.array_type(t, 0));
                 context.pointer_type(context.structure_type(&ps, false))
             },
             lir::Type::Struct { fields } => {
                 let ps: Vec<llvm::Type> = fields.iter().map(|a| Translate::to_type(context, a)).collect();
+                context.structure_type(&ps, false)
+            },
+            lir::Type::Union { variants } => {
+                let ps = vec![
+                    // force the union to be aligned 8
+                    context.i64_type(),
+                    context.array_type(context.i8_type(), Translate::sizeof(ty) - 8)
+                ];
                 context.structure_type(&ps, false)
             },
             lir::Type::Fun { ret, args } => {
@@ -676,6 +783,29 @@ impl<'a> BodyTranslator<'a> {
                 let x = self.to_addr(dst);
                 self.builder.store(v, x)
             },
+            lir::Stm::New { dst, ty } => {
+                let t = self.to_type(ty);
+                let (size, _) = Translate::sizeof_exp(ty);
+                let f = self.to_value(&lir::Exp::FunctionAddr { ty: ty.clone(), name: Name::new("malloc") });
+                let vs: Vec<llvm::Value> = vec![self.to_value(&size)];
+                let e = self.builder.call(f, &vs, &self.fresh_name());
+                let v = self.builder.bitcast(e, t, &self.fresh_name());
+                let x = self.to_addr(dst);
+                self.builder.store(v, x)
+            },
+            lir::Stm::NewHybrid { dst, ty, length } => {
+                let t = self.to_type(ty);
+                let (fixed_size, variant_size) = Translate::sizeof_exp(ty);
+                let e = self.to_value(length);
+                let variant = self.builder.mul(self.to_value(&variant_size), self.to_value(length), &self.fresh_name());
+                let size = self.builder.add(self.to_value(&fixed_size), variant, &self.fresh_name());
+                let f = self.to_value(&lir::Exp::FunctionAddr { ty: ty.clone(), name: Name::new("malloc") });
+                let vs: Vec<llvm::Value> = vec![size];
+                let e = self.builder.call(f, &vs, &self.fresh_name());
+                let v = self.builder.bitcast(e, t, &self.fresh_name());
+                let x = self.to_addr(dst);
+                self.builder.store(v, x)
+            },
             lir::Stm::GetStructElementAddr { dst, struct_ty, ptr, field } => {
                 let p = self.to_value(ptr);
                 // let base = llvm::Value::i32(0); // struct fields are i32
@@ -696,13 +826,6 @@ impl<'a> BodyTranslator<'a> {
                 // and then by i to get the element.
                 let base = llvm::Value::i32(1); // struct fields are i32
                 let v = self.builder.get_in_bounds_element_pointer(a, &[base, i], &self.fresh_name());
-                let x = self.to_addr(dst);
-                self.builder.store(v, x)
-            },
-            lir::Stm::GetArrayLengthAddr { dst, ptr } => {
-                let a = self.to_value(ptr);
-                // Get the pointer to the length field.
-                let v = self.builder.get_struct_element_pointer(a, 0, &self.fresh_name());
                 let x = self.to_addr(dst);
                 self.builder.store(v, x)
             },
@@ -772,6 +895,13 @@ impl TempFinder {
                 TempFinder::add_temps_for_exp(dst, temps);
                 TempFinder::add_temps_for_exp(exp, temps);
             },
+            lir::Stm::New { dst, ty } => {
+                TempFinder::add_temps_for_exp(dst, temps);
+            },
+            lir::Stm::NewHybrid { dst, ty, length } => {
+                TempFinder::add_temps_for_exp(dst, temps);
+                TempFinder::add_temps_for_exp(length, temps);
+            },
             lir::Stm::Label { label } => {},
             lir::Stm::GetStructElementAddr { dst, struct_ty, ptr, field: usize } => {
                 TempFinder::add_temps_for_exp(dst, temps);
@@ -781,10 +911,6 @@ impl TempFinder {
                 TempFinder::add_temps_for_exp(dst, temps);
                 TempFinder::add_temps_for_exp(ptr, temps);
                 TempFinder::add_temps_for_exp(index, temps);
-            },
-            lir::Stm::GetArrayLengthAddr { dst, ptr } => {
-                TempFinder::add_temps_for_exp(dst, temps);
-                TempFinder::add_temps_for_exp(ptr, temps);
             },
         }
     }

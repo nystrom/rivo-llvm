@@ -184,18 +184,6 @@ impl ProcTranslator {
 
                 dst
             },
-            mir::Exp::GetArrayLengthAddr { ptr } => {
-                let p = self.translate_exp_into(&*ptr, ss);
-
-                ss.push(
-                    lir::Stm::GetArrayLengthAddr {
-                        dst: dst.clone(),
-                        ptr: p,
-                    }
-                );
-
-                dst
-            },
             mir::Exp::Load { ty, ptr } => {
                 let p = self.translate_exp_into(&*ptr, ss);
 
@@ -244,6 +232,29 @@ impl ProcTranslator {
                         dst: dst.clone(),
                         ty: ty.clone(),
                         exp: t,
+                    }
+                );
+
+                dst
+            },
+            mir::Exp::New { ty } => {
+                ss.push(
+                    lir::Stm::New {
+                        dst: dst.clone(),
+                        ty: ty.clone(),
+                    }
+                );
+
+                dst
+            },
+            mir::Exp::NewHybrid { ty, length } => {
+                let t = self.translate_exp_into(&*length, ss);
+
+                ss.push(
+                    lir::Stm::NewHybrid {
+                        dst: dst.clone(),
+                        ty: ty.clone(),
+                        length: t,
                     }
                 );
 
