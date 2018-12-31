@@ -46,7 +46,6 @@ impl<'de> Deserialize<'de> for Interned {
     fn deserialize<D>(deserializer: D) -> Result<Interned, D::Error>
         where D: Deserializer<'de>
     {
-
         struct InternedVisitor;
 
         impl<'de> de::Visitor<'de> for InternedVisitor {
@@ -79,6 +78,16 @@ impl Name {
     pub fn fresh(prefix: &str) -> Name {
         let s = format!("{}.{}", prefix, CACHE.lock().unwrap().len());
         Name::new(&s)
+    }
+
+    pub fn hashit(&self) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut s = DefaultHasher::new();
+        // hash to_string because hashing the interned string can produce different values in
+        // different runs of the program depending on the order of interning
+        self.to_string().hash(&mut s);   
+        s.finish()
     }
 }
 
